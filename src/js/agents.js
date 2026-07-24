@@ -1073,7 +1073,7 @@ export function createAgentSystem({
 
     try {
       const prompt = buildAgentPrompt(agent, ctx);
-      const decision = await requestAgentDecision(prompt);
+      const decision = await requestAgentDecision(prompt, agent.name);
       if (decision && agent.stats.alive && !agent.stats.inJail) {
         executeDecision(agent, decision, { force: false });
         agent.lastResult = `${agent.lastResult || "ok"} [llm]`;

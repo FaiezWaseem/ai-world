@@ -454,17 +454,29 @@ function pickChat(agent, other) {
   return lines[Math.floor(Math.random() * lines.length)];
 }
 
-export async function requestAgentDecision(prompt) {
+/**
+ * @param {string} prompt
+ * @param {string} [agentName]
+ * @returns {Promise<object|null>}
+ */
+export async function requestAgentDecision(prompt, agentName = "agent") {
+  const tag = String(agentName || "agent").toLowerCase();
+
   return enqueueLlm(async () => {
     try {
       const data = await postDecide(prompt, LLM_CLIENT_TIMEOUT_MS);
-      return parseAgentDecision(data.text);
+      const raw = (data.text || "").trim();
+      const decision = parseAgentDecision(raw);
+      const action = decision?.action || "parse_fail";
+      // [name][action][full model response]
+      console.log(`[${tag}][${action}][${raw}]`);
+      return decision;
     } catch (err) {
       const msg =
         err?.name === "AbortError"
           ? `timed out after ${LLM_CLIENT_TIMEOUT_MS / 1000}s`
           : err.message;
-      console.warn("[agent LLM]", msg);
+      console.warn(`[${tag}][error][${msg}]`);
       return null;
     }
   });
@@ -507,10 +519,13 @@ Player just said: "${playerLine}"
 
 Reply in ONE short spoken line (max 100 characters). Stay in character. No JSON, no quotes around the whole reply, no stage directions.`;
 
+  const tag = String(agent.name || "agent").toLowerCase();
+
   return enqueueLlm(async () => {
     try {
       const data = await postDecide(prompt, LLM_CLIENT_TIMEOUT_MS);
-      let text = (data.text || "").trim();
+      const raw = (data.text || "").trim();
+      let text = raw;
       text = text.replace(/^```[\s\S]*?```$/g, "").trim();
       text = text.replace(/^["'“”]|["'“”]$/g, "").trim();
       if (text.startsWith("{")) {
@@ -521,13 +536,16 @@ Reply in ONE short spoken line (max 100 characters). Stay in character. No JSON,
           /* keep */
         }
       }
-      return String(text).slice(0, 120) || null;
+      text = String(text).slice(0, 120) || null;
+      // [name][chat][response]
+      console.log(`[${tag}][chat][${text || raw}]`);
+      return text;
     } catch (err) {
       const msg =
         err?.name === "AbortError"
           ? `timed out after ${LLM_CLIENT_TIMEOUT_MS / 1000}s`
           : err.message;
-      console.warn("[agent chat]", msg);
+      console.warn(`[${tag}][chat_error][${msg}]`);
       return null;
     }
   });

@@ -224,12 +224,17 @@ const server = http.createServer(async (req, res) => {
       }
 
       const result = await callLlm(prompt);
+      // Brief server log (full structured log is in the browser as [name][action][response])
+      const preview = String(result.text || "")
+        .replace(/\s+/g, " ")
+        .slice(0, 160);
+      console.log(`[llm][ok][${preview}]`);
       sendJson(res, 200, {
         text: result.text,
         model: MODEL
       });
     } catch (err) {
-      console.error("[agent/decide]", err.message);
+      console.error(`[llm][error][${err.message}]`);
       sendJson(res, err.status || 500, {
         error: err.message || "LLM request failed"
       });
