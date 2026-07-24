@@ -12,6 +12,18 @@ export const PLAYER_SPRINT_SPEED = 410;
 export const NPC_COUNT = 30;
 export const NPC_SIZE = 16;
 export const CAR_COUNT = 42;
+
+/** Default AI citizen count (overridden by /api/config from .env). */
+export const DEFAULT_AGENT_COUNT = 4;
+export const AGENT_SIZE = 26;
+export const AGENT_SPEED = 240;
+export const AGENT_THINK_MIN_SEC = 6;
+export const AGENT_THINK_MAX_SEC = 12;
+export const AGENT_SPEECH_RANGE = 160;
+/** How close agents must be to borrow cash or guns. */
+export const AGENT_TRADE_RANGE = 90;
+export const AGENT_BORROW_DEFAULT = 20;
+export const AGENT_BORROW_MAX = 80;
 export const CAR_LENGTH = 46;
 export const CAR_WIDTH = 22;
 

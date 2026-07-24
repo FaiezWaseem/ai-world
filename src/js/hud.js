@@ -94,6 +94,102 @@ export function createHUD({
   instructions.y = 14;
   hud.addChild(instructions);
 
+  // Net-worth card (top-left) — same card style as chat.
+  const NW_WIDTH = 260;
+  const NW_HEIGHT = 200;
+  const netWorthBox = new PIXI.Container();
+  const netWorthBg = new PIXI.Graphics();
+  netWorthBg
+    .roundRect(0, 0, NW_WIDTH, NW_HEIGHT, 12)
+    .fill({ color: 0x0f172a, alpha: 0.92 })
+    .stroke({ color: 0xc084fc, width: 2, alpha: 0.95 });
+  netWorthBg
+    .roundRect(0, 0, NW_WIDTH, 32, 12)
+    .fill({ color: 0x3b0764, alpha: 0.95 });
+  netWorthBg
+    .rect(0, 20, NW_WIDTH, 12)
+    .fill({ color: 0x3b0764, alpha: 0.95 });
+
+  const netWorthTitle = new PIXI.Text({
+    text: "NET WORTH",
+    style: textStyle(15, 0xe9d5ff)
+  });
+  netWorthTitle.x = 12;
+  netWorthTitle.y = 7;
+
+  const agentPanel = new PIXI.Text({
+    text: "Loading agents…",
+    style: {
+      fontFamily: "Arial",
+      fontSize: 14,
+      fontWeight: "bold",
+      fill: 0xf5d0fe,
+      lineHeight: 22,
+      dropShadow: {
+        color: 0x000000,
+        alpha: 0.9,
+        blur: 2,
+        distance: 1
+      }
+    }
+  });
+  agentPanel.x = 14;
+  agentPanel.y = 42;
+
+  netWorthBox.addChild(netWorthBg, netWorthTitle, agentPanel);
+  netWorthBox.x = 16;
+  netWorthBox.y = 88;
+  hud.addChild(netWorthBox);
+
+  // High-visibility agent chat box (bottom-right).
+  const CHAT_WIDTH = 340;
+  const CHAT_HEIGHT = 210;
+  const chatBox = new PIXI.Container();
+  const chatBg = new PIXI.Graphics();
+  chatBg
+    .roundRect(0, 0, CHAT_WIDTH, CHAT_HEIGHT, 12)
+    .fill({ color: 0x0f172a, alpha: 0.92 })
+    .stroke({ color: 0xfacc15, width: 2, alpha: 0.95 });
+  // Top accent bar
+  chatBg
+    .roundRect(0, 0, CHAT_WIDTH, 32, 12)
+    .fill({ color: 0x422006, alpha: 0.95 });
+  chatBg
+    .rect(0, 20, CHAT_WIDTH, 12)
+    .fill({ color: 0x422006, alpha: 0.95 });
+
+  const chatTitle = new PIXI.Text({
+    text: "AGENT CHAT",
+    style: textStyle(15, 0xfacc15)
+  });
+  chatTitle.x = 12;
+  chatTitle.y = 7;
+
+  const chatPanel = new PIXI.Text({
+    text: "Waiting for agents to talk…",
+    style: {
+      fontFamily: "Arial",
+      fontSize: 13,
+      fontWeight: "bold",
+      fill: 0xfef3c7,
+      lineHeight: 18,
+      wordWrap: true,
+      wordWrapWidth: CHAT_WIDTH - 24,
+      dropShadow: {
+        color: 0x000000,
+        alpha: 0.9,
+        blur: 2,
+        distance: 1
+      }
+    }
+  });
+  chatPanel.x = 12;
+  chatPanel.y = 40;
+
+  chatBox.addChild(chatBg, chatTitle, chatPanel);
+  chatBox.visible = true;
+  hud.addChild(chatBox);
+
   // Status bars (bottom-left)
   const healthBar = makeBar("HEALTH", COLORS.health, 0);
   const hungerBar = makeBar("HUNGER", COLORS.hunger, 0);
@@ -184,7 +280,10 @@ export function createHUD({
   const minimapContainer = new PIXI.Container();
   const minimapBackground = new PIXI.Graphics();
   const minimapCity = new PIXI.Graphics();
+  const minimapAgentsLayer = new PIXI.Container();
   const minimapPlayer = new PIXI.Graphics();
+  /** @type {Map<string, PIXI.Graphics>} */
+  const minimapAgentDots = new Map();
 
   minimapBackground
     .roundRect(-8, -8, MINIMAP_SIZE + 16, MINIMAP_SIZE + 16, 10)
@@ -247,8 +346,10 @@ export function createHUD({
       width: 2
     });
 
+  // Player drawn last so it stays on top of agent dots.
   minimapContainer.addChild(minimapBackground);
   minimapContainer.addChild(minimapCity);
+  minimapContainer.addChild(minimapAgentsLayer);
   minimapContainer.addChild(minimapPlayer);
   hud.addChild(minimapContainer);
 
@@ -258,6 +359,9 @@ export function createHUD({
 
     minimapContainer.x = w - MINIMAP_SIZE - 22;
     minimapContainer.y = 22;
+
+    netWorthBox.x = 16;
+    netWorthBox.y = 88;
 
     const baseY = h - 110;
     healthBar.root.y = baseY;
@@ -288,6 +392,9 @@ export function createHUD({
     wantedText.x = w / 2;
     wantedText.y = 16;
 
+    chatBox.x = w - CHAT_WIDTH - 18;
+    chatBox.y = h - CHAT_HEIGHT - 18;
+
     jailBg.clear();
     jailBg.rect(0, 0, w, h).fill({ color: 0x0f172a, alpha: 0.55 });
     jailTitle.x = w / 2;
@@ -299,14 +406,125 @@ export function createHUD({
   positionHUD();
   window.addEventListener("resize", positionHUD);
 
-  function updateMinimapPlayer(player) {
-    minimapPlayer.x = player.x * minimapScale;
-    minimapPlayer.y = player.y * minimapScale;
+  function ensureAgentDot(agent) {
+    let dot = minimapAgentDots.get(agent.id);
+    if (dot) {
+      return dot;
+    }
+
+    dot = new PIXI.Graphics();
+    const color = agent.color ?? 0xf472b6;
+    dot
+      .circle(0, 0, 3)
+      .fill({ color })
+      .stroke({
+        color: 0xffffff,
+        width: 1,
+        alpha: 0.9
+      });
+
+    minimapAgentsLayer.addChild(dot);
+    minimapAgentDots.set(agent.id, dot);
+    return dot;
   }
 
-  function updateHUD(stats, prompt = "") {
+  function updateMinimapAgents(agents) {
+    if (!Array.isArray(agents)) {
+      return;
+    }
+
+    const seen = new Set();
+
+    for (const agent of agents) {
+      seen.add(agent.id);
+      const dot = ensureAgentDot(agent);
+      const alive = agent.stats?.alive !== false;
+
+      dot.visible = alive;
+      if (!alive) {
+        continue;
+      }
+
+      dot.x = agent.x * minimapScale;
+      dot.y = agent.y * minimapScale;
+
+      // Pulse-style cue: wanted agents slightly larger / red ring feel via alpha.
+      if (agent.stats?.wanted) {
+        dot.alpha = 1;
+        dot.scale.set(1.25);
+      } else if (agent.stats?.inJail) {
+        dot.alpha = 0.55;
+        dot.scale.set(0.9);
+      } else {
+        dot.alpha = 0.95;
+        dot.scale.set(1);
+      }
+    }
+
+    for (const [id, dot] of minimapAgentDots) {
+      if (!seen.has(id)) {
+        minimapAgentsLayer.removeChild(dot);
+        dot.destroy();
+        minimapAgentDots.delete(id);
+      }
+    }
+  }
+
+  function updateMinimapPlayer(player, agents) {
+    minimapPlayer.x = player.x * minimapScale;
+    minimapPlayer.y = player.y * minimapScale;
+    updateMinimapAgents(agents);
+  }
+
+  function updateHUD(stats, prompt = "", extras = {}) {
     setBar(healthBar, stats.health);
     setBar(hungerBar, stats.hunger);
+
+    if (Array.isArray(extras.agents)) {
+      updateMinimapAgents(extras.agents);
+
+      const gunPrice = new Map(GUNS.map((g) => [g.id, g.price]));
+      const withNw = extras.agents.map((a) => {
+        const cash = a.stats?.money || 0;
+        const gunsValue = (a.stats?.ownedGuns || []).reduce(
+          (sum, id) => sum + (gunPrice.get(id) || 0),
+          0
+        );
+        return {
+          agent: a,
+          cash,
+          gunsValue,
+          netWorth: cash + gunsValue
+        };
+      });
+
+      // Richest first — name + net worth only
+      withNw.sort((a, b) => b.netWorth - a.netWorth);
+
+      const lines = withNw.map((row, i) => {
+        const rank = i + 1;
+        const dead = row.agent.stats?.alive === false ? " †" : "";
+        return `${rank}. ${row.agent.name}${dead}    $${row.netWorth}`;
+      });
+      agentPanel.text = lines.length
+        ? lines.join("\n")
+        : "No agents yet";
+    }
+
+    if (Array.isArray(extras.chat) && extras.chat.length) {
+      chatPanel.text = extras.chat
+        .slice(-9)
+        .map((c) => {
+          const who =
+            c.to && c.to !== "all" ? `${c.from} → ${c.to}` : c.from;
+          return `• ${who}: ${c.text}`;
+        })
+        .join("\n");
+      chatBox.visible = true;
+    } else if (Array.isArray(extras.chat)) {
+      chatPanel.text = "Waiting for agents to talk…";
+      chatBox.visible = true;
+    }
 
     moneyText.text = `$${stats.money}`;
     jobText.text = stats.job

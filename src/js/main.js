@@ -1,3 +1,4 @@
+import { createAgentSystem, fetchAgentCount } from "./agents.js";
 import { COLORS, GUNS, WORLD_HEIGHT, WORLD_WIDTH } from "./config.js";
 import { updateCamera } from "./camera.js";
 import { generateCity } from "./city.js";
@@ -60,6 +61,7 @@ import { createTrafficSystem } from "./traffic.js";
   const trafficLayer = new PIXI.Container();
   const carLayer = new PIXI.Container();
   const npcLayer = new PIXI.Container();
+  const agentLayer = new PIXI.Container();
   const policeLayer = new PIXI.Container();
   const effectsLayer = new PIXI.Container();
   const playerLayer = new PIXI.Container();
@@ -72,6 +74,7 @@ import { createTrafficSystem } from "./traffic.js";
   world.addChild(trafficLayer);
   world.addChild(carLayer);
   world.addChild(npcLayer);
+  world.addChild(agentLayer);
   world.addChild(policeLayer);
   world.addChild(effectsLayer);
   world.addChild(playerLayer);
@@ -95,6 +98,7 @@ import { createTrafficSystem } from "./traffic.js";
 
   const traffic = createTrafficSystem(trafficLayer);
   const npcsRef = { list: [] };
+  const agentsRef = { system: null };
 
   const cars = createCarSystem({
     carLayer,
@@ -122,8 +126,21 @@ import { createTrafficSystem } from "./traffic.js";
     policeLayer,
     buildingColliders,
     getPlayer: () => player,
-    getStats: () => stats
+    getStats: () => stats,
+    getExtraWanted: () => agentsRef.system?.getWantedSubjects?.() || []
   });
+
+  const agentCount = await fetchAgentCount();
+  const agents = createAgentSystem({
+    agentLayer,
+    buildingColliders,
+    npcSystem: npcs,
+    effectsLayer,
+    police,
+    getPlayer: () => player,
+    count: agentCount
+  });
+  agentsRef.system = agents;
 
   const ui = createHUD({
     app,
@@ -134,7 +151,6 @@ import { createTrafficSystem } from "./traffic.js";
   const autoSave = setupAutoSave(player, stats, 5);
   const didLoad = loadPlayerState(player, stats);
 
-  // Restore jail / wanted after load.
   if (didLoad && stats.inJail) {
     const spot = police.getJailSpot();
     player.x = spot.x;
@@ -146,8 +162,8 @@ import { createTrafficSystem } from "./traffic.js";
   if (!didLoad) {
     setPlayerMessage(
       stats,
-      "New game — progress auto-saves. Press K to save, L to load.",
-      4
+      `${agentCount} AI citizens online. They work, eat, talk — and may commit crimes.`,
+      5
     );
   }
 
@@ -183,7 +199,7 @@ import { createTrafficSystem } from "./traffic.js";
 
     if (input.consumePress("KeyL")) {
       if (loadPlayerState(player, stats)) {
-        // message set inside loadPlayerState
+        // message set inside load
       } else {
         setPlayerMessage(stats, "No save found.", 2);
       }
@@ -203,6 +219,7 @@ import { createTrafficSystem } from "./traffic.js";
       deltaSeconds
     );
     npcs.updateNPCs(deltaSeconds);
+    agents.updateAgents(deltaSeconds);
     police.updatePolice(deltaSeconds);
     updateCamera(app, world, player, deltaSeconds);
 
@@ -243,12 +260,14 @@ import { createTrafficSystem } from "./traffic.js";
       }
     }
 
-    ui.updateMinimapPlayer(player);
-    ui.updateHUD(stats, prompt);
+    ui.updateMinimapPlayer(player, agents.agents);
+    ui.updateHUD(stats, prompt, {
+      agents: agents.agents,
+      chat: agents.getChatLog()
+    });
 
     input.clearJustPressed();
   });
 
-  // Persist once systems are ready.
   autoSave.saveNow();
 })();

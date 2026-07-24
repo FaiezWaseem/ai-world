@@ -74,6 +74,8 @@ export function createPlayerStats() {
     wanted: false,
     inJail: false,
     jailTimer: 0,
+    debt: 0,
+    loansOut: 0,
     message: "",
     messageTimer: 0
   };
@@ -96,6 +98,8 @@ export function resetPlayerStats(stats) {
   stats.wanted = false;
   stats.inJail = false;
   stats.jailTimer = 0;
+  stats.debt = 0;
+  stats.loansOut = 0;
   stats.message = "Find a job, earn money, then eat!";
   stats.messageTimer = 4;
 }
@@ -142,7 +146,13 @@ export function setPlayerMessage(stats, text, duration = 2.5) {
   stats.messageTimer = duration;
 }
 
-export function updatePlayerStats(stats, deltaSeconds) {
+/**
+ * Shared survival ticks (hunger + tax) for player and AI agents.
+ * @param {{ silent?: boolean, name?: string }} options
+ */
+export function tickSurvival(stats, deltaSeconds, options = {}) {
+  const silent = Boolean(options.silent);
+
   if (stats.messageTimer > 0) {
     stats.messageTimer -= deltaSeconds;
     if (stats.messageTimer <= 0) {
@@ -158,6 +168,10 @@ export function updatePlayerStats(stats, deltaSeconds) {
     stats.workCooldown = Math.max(0, stats.workCooldown - deltaSeconds);
   }
 
+  if (stats.fireCooldown > 0) {
+    stats.fireCooldown = Math.max(0, stats.fireCooldown - deltaSeconds);
+  }
+
   stats.hungerTimer += deltaSeconds;
 
   while (stats.hungerTimer >= HUNGER_INTERVAL_SEC) {
@@ -167,24 +181,54 @@ export function updatePlayerStats(stats, deltaSeconds) {
     if (stats.hunger <= 0) {
       stats.health = 0;
       stats.alive = false;
-      stats.message = "You starved. Press R to restart.";
-      stats.messageTimer = 99;
+      if (!silent) {
+        stats.message = "You starved. Press R to restart.";
+        stats.messageTimer = 99;
+      } else {
+        stats.message = `${options.name || "Agent"} starved.`;
+        stats.messageTimer = 4;
+      }
       return;
     }
 
-    setPlayerMessage(
-      stats,
-      `Hunger -${HUNGER_DROP_PERCENT}%  (${Math.round(stats.hunger)}% left)`,
-      2
-    );
+    if (!silent) {
+      setPlayerMessage(
+        stats,
+        `Hunger -${HUNGER_DROP_PERCENT}%  (${Math.round(stats.hunger)}% left)`,
+        2
+      );
+    }
   }
 
   stats.taxTimer += deltaSeconds;
 
   while (stats.taxTimer >= TAX_INTERVAL_SEC) {
     stats.taxTimer -= TAX_INTERVAL_SEC;
-    applyIncomeTax(stats);
+    if (silent) {
+      applyAgentTax(stats, options.name);
+    } else {
+      applyIncomeTax(stats);
+    }
   }
+}
+
+function applyAgentTax(stats, name) {
+  if (stats.totalIncome <= 0) {
+    return;
+  }
+  const taxDue = Math.floor(stats.totalIncome * TAX_RATE);
+  if (taxDue <= 0) {
+    return;
+  }
+  const paid = Math.min(stats.money, taxDue);
+  stats.money -= paid;
+  stats.totalTaxPaid += paid;
+  stats.message = `${name || "Agent"} paid tax $${paid}`;
+  stats.messageTimer = 2.5;
+}
+
+export function updatePlayerStats(stats, deltaSeconds) {
+  tickSurvival(stats, deltaSeconds, { silent: false });
 }
 
 export function createPlayer(playerLayer) {
