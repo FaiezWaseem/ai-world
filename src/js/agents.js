@@ -8,6 +8,7 @@ import {
   CELL_SIZE,
   DEFAULT_AGENT_COUNT,
   JOBS,
+  KID_GROW_SEC,
   ROAD_SIZE,
   SPECIAL_BUILDINGS,
   WORLD_HEIGHT,
@@ -29,15 +30,41 @@ import {
 import { isBuyable, tickPropertyRent } from "./properties.js";
 import {
   buildAgentPrompt,
+  fallbackChatReply,
   fallbackDecision,
-  requestAgentDecision
+  requestAgentDecision,
+  requestChatReply
 } from "./agentBrain.js";
+import { createConversationUi } from "./conversationUi.js";
 import { clamp, random } from "./helpers.js";
+import {
+  doDivorce,
+  doMarry,
+  findMarriageHall,
+  tickFamilies
+} from "./marriage.js";
 import {
   createPlayerStats,
   setPlayerMessage,
   tickSurvival
 } from "./player.js";
+
+const KID_NAMES = [
+  "Sam",
+  "Rio",
+  "Max",
+  "Sky",
+  "Lee",
+  "Zoe",
+  "Kai",
+  "Ash",
+  "Noa",
+  "Remy",
+  "Pax",
+  "Quin"
+];
+let nextAgentSerial = 0;
+let kidNameIndex = 0;
 
 /**
  * Customize AI citizens here.
@@ -197,12 +224,98 @@ export function createAgentSystem({
   let lastPlayerLine = "";
   let lastPlayerLineAt = 0;
 
+  /** Face-to-face conversation with human (agent freezes). */
+  let conversationAgent = null;
+  let conversationBusy = false;
+  const conversationHistory = [];
+  const convoUi = createConversationUi();
+
   function pushChat(from, to, text) {
     chatLog.push({ t: performance.now(), from, to, text });
     if (chatLog.length > 40) {
       chatLog.shift();
     }
   }
+
+  function isInConversation() {
+    return Boolean(conversationAgent);
+  }
+
+  function endConversation(silent = false) {
+    if (conversationAgent) {
+      conversationAgent.inConversation = false;
+      conversationAgent.pendingBorrow = null;
+      // Let them wander again soon
+      conversationAgent.thinkTimer = random(1, 3);
+      if (!silent) {
+        say(conversationAgent, "See you around.", 3);
+        pushChat(conversationAgent.name, "You", "See you around.");
+      }
+    }
+    conversationAgent = null;
+    conversationBusy = false;
+    conversationHistory.length = 0;
+    convoUi.close();
+    const pStats = getPlayerStats();
+    if (pStats && !silent) {
+      setPlayerMessage(pStats, "Conversation ended.", 1.5);
+    }
+  }
+
+  async function handlePlayerChatMessage(text) {
+    if (!conversationAgent || conversationBusy) {
+      return;
+    }
+    const agent = conversationAgent;
+    const pStats = getPlayerStats();
+
+    lastPlayerLine = text;
+    lastPlayerLineAt = performance.now();
+    conversationHistory.push({ from: "You", text });
+    pushChat("You", agent.name, text);
+    convoUi.addLine("You", text, "you");
+
+    conversationBusy = true;
+    convoUi.setBusy(true);
+    convoUi.addLine("…", `${agent.name} is thinking…`, "system");
+
+    let reply = await requestChatReply(agent, text, conversationHistory);
+    if (!reply) {
+      reply = fallbackChatReply(agent, text);
+    }
+
+    // Remove thinking line
+    const log = document.getElementById("convo-log");
+    if (log?.lastChild?.classList?.contains("system")) {
+      log.removeChild(log.lastChild);
+    }
+
+    if (conversationAgent !== agent) {
+      conversationBusy = false;
+      return;
+    }
+
+    conversationHistory.push({ from: agent.name, text: reply });
+    say(agent, reply, 6);
+    pushChat(agent.name, "You", reply);
+    convoUi.addLine(agent.name, reply, "agent");
+    if (pStats) {
+      setPlayerMessage(pStats, `${agent.name}: "${reply}"`, 3);
+    }
+
+    conversationBusy = false;
+    convoUi.setBusy(false);
+    agent.lastResult = "talking with player";
+  }
+
+  convoUi.setHandlers({
+    send: (text) => {
+      handlePlayerChatMessage(text);
+    },
+    close: () => {
+      endConversation(false);
+    }
+  });
 
   function notifyPlayer(text, duration = 3.5) {
     const stats = getPlayerStats();
@@ -269,41 +382,7 @@ export function createAgentSystem({
     };
   }
 
-  function createOne(index, total) {
-    const profile = AGENT_PROFILES[index % AGENT_PROFILES.length];
-    const name = profile.name;
-    const color = profile.color;
-    const personality = profile.personality;
-    const visual = createAgentVisual(color, name);
-    const spawn = pickSpawnPoint(index, total);
-    visual.x = spawn.x;
-    visual.y = spawn.y;
-
-    const stats = createPlayerStats();
-    stats.money = Math.floor(random(5, 25));
-    stats.message = "";
-    stats.messageTimer = 0;
-
-    const agent = {
-      id: `agent-${index}`,
-      name,
-      personality,
-      color,
-      stats,
-      targetX: null,
-      targetY: null,
-      targetType: null,
-      thinkTimer: random(1, 4),
-      thinking: false,
-      speech: "",
-      speechTimer: 0,
-      lastSpeech: "",
-      lastResult: "spawned",
-      currentAction: "wander",
-      visual,
-      bubble: visual.bubble
-    };
-
+  function attachAgent(agent, visual) {
     Object.defineProperty(agent, "x", {
       get: () => visual.x,
       set: (v) => {
@@ -322,10 +401,112 @@ export function createAgentSystem({
         visual.rotation = v;
       }
     });
-
     agentLayer.addChild(visual);
     agents.push(agent);
     return agent;
+  }
+
+  function createOne(index, total) {
+    const profile = AGENT_PROFILES[index % AGENT_PROFILES.length];
+    const name = profile.name;
+    const color = profile.color;
+    const personality = profile.personality;
+    const visual = createAgentVisual(color, name);
+    const spawn = pickSpawnPoint(index, total);
+    visual.x = spawn.x;
+    visual.y = spawn.y;
+
+    const stats = createPlayerStats();
+    stats.money = Math.floor(random(5, 25));
+    stats.message = "";
+    stats.messageTimer = 0;
+
+    const id = `agent-${nextAgentSerial++}`;
+    const agent = {
+      id,
+      name,
+      personality,
+      color,
+      stats,
+      targetX: null,
+      targetY: null,
+      targetType: null,
+      thinkTimer: random(1, 4),
+      thinking: false,
+      inConversation: false,
+      speech: "",
+      speechTimer: 0,
+      lastSpeech: "",
+      lastResult: "spawned",
+      currentAction: "wander",
+      visual,
+      bubble: visual.bubble,
+      spouseId: null,
+      spouseName: null,
+      childIds: [],
+      parentIds: [],
+      isChild: false,
+      kidTimer: 0,
+      growTimer: 0
+    };
+
+    return attachAgent(agent, visual);
+  }
+
+  function createKid(parentA, parentB) {
+    const name = KID_NAMES[kidNameIndex % KID_NAMES.length];
+    kidNameIndex += 1;
+    // Blend colors
+    const color =
+      ((parentA.color & 0xfefefe) + (parentB.color & 0xfefefe)) / 2;
+    const colorInt = Math.floor(color) & 0xffffff;
+    const visual = createAgentVisual(colorInt, name);
+    visual.scale.set(0.72);
+    visual.x = (parentA.x + parentB.x) / 2 + random(-20, 20);
+    visual.y = (parentA.y + parentB.y) / 2 + random(-20, 20);
+
+    const stats = createPlayerStats();
+    stats.money = Math.floor(random(0, 8));
+    stats.message = "";
+    stats.messageTimer = 0;
+
+    const id = `agent-kid-${nextAgentSerial++}`;
+    const kid = {
+      id,
+      name,
+      personality: `child of ${parentA.name} & ${parentB.name}; curious and playful`,
+      color: colorInt,
+      stats,
+      targetX: null,
+      targetY: null,
+      targetType: null,
+      thinkTimer: random(2, 5),
+      thinking: false,
+      inConversation: false,
+      speech: "",
+      speechTimer: 0,
+      lastSpeech: "",
+      lastResult: "born",
+      currentAction: "wander",
+      visual,
+      bubble: visual.bubble,
+      spouseId: null,
+      spouseName: null,
+      childIds: [],
+      parentIds: [parentA.id, parentB.id],
+      isChild: true,
+      kidTimer: 0,
+      growTimer: 0
+    };
+
+    parentA.childIds = parentA.childIds || [];
+    parentB.childIds = parentB.childIds || [];
+    parentA.childIds.push(id);
+    parentB.childIds.push(id);
+
+    attachAgent(kid, visual);
+    say(kid, "Hi!", 3);
+    return kid;
   }
 
   for (let i = 0; i < count; i++) {
@@ -353,6 +534,9 @@ export function createAgentSystem({
         money: a.stats.money,
         guns: [...(a.stats.ownedGuns || [])],
         hunger: a.stats.hunger,
+        married: Boolean(a.spouseId),
+        spouse: a.spouseName || null,
+        isChild: Boolean(a.isChild),
         dist: dist(agent.x, agent.y, a.x, a.y),
         lastSpeech: a.lastSpeech
       }))
@@ -565,6 +749,35 @@ export function createAgentSystem({
         }
         break;
       }
+      case "marry":
+      case "propose": {
+        const hall = findMarriageHall(buildingColliders);
+        if (hall) {
+          const d = dist(
+            agent.x,
+            agent.y,
+            hall.x + hall.width / 2,
+            hall.y + hall.height / 2
+          );
+          if (d > 80) {
+            agent.targetX = hall.x + hall.width / 2;
+            agent.targetY = hall.y + hall.height / 2;
+            agent.targetType = "marriage_hall";
+            agent.pendingMarry = {
+              ...decision,
+              target: decision.target || decision.sayTo
+            };
+            agent.lastResult = "going to marriage hall";
+            say(agent, "To the Marriage Hall!", 2.5);
+            break;
+          }
+        }
+        doMarry(agent, decision, agents, buildingColliders, pushChat);
+        break;
+      }
+      case "divorce":
+        doDivorce(agent, agents, pushChat);
+        break;
       case "wait":
         agent.targetX = null;
         agent.targetY = null;
@@ -577,7 +790,7 @@ export function createAgentSystem({
 
   /** Instant local survival plan — never blocks on the network. */
   function planLocally(agent) {
-    if (!agent.stats.alive || agent.stats.inJail) {
+    if (!agent.stats.alive || agent.stats.inJail || agent.inConversation) {
       return;
     }
     const ctx = worldContextFor(agent);
@@ -603,7 +816,12 @@ export function createAgentSystem({
    * Movement already comes from planLocally so agents never freeze waiting on API.
    */
   async function thinkWithLlm(agent) {
-    if (agent.thinking || !agent.stats.alive || agent.stats.inJail) {
+    if (
+      agent.thinking ||
+      !agent.stats.alive ||
+      agent.stats.inJail ||
+      agent.inConversation
+    ) {
       return;
     }
     agent.thinking = true;
@@ -684,6 +902,24 @@ export function createAgentSystem({
         }
       }
 
+      // Freeze while in a face-to-face chat with the player
+      if (agent.inConversation) {
+        if (conversationAgent === agent && !agent.stats.alive) {
+          endConversation(true);
+          continue;
+        }
+        agent.targetX = null;
+        agent.targetY = null;
+        agent.targetType = null;
+        const player = getPlayer();
+        if (player) {
+          agent.rotation =
+            Math.atan2(player.y - agent.y, player.x - agent.x) +
+            Math.PI / 2;
+        }
+        continue;
+      }
+
       // Always keep a destination so agents roam the map.
       if (!agent.stats.inJail && agent.targetX == null) {
         planLocally(agent);
@@ -719,36 +955,67 @@ export function createAgentSystem({
             doBuyGun(agent, buildingColliders, "pistol");
           } else if (destType === "property") {
             doBuyProperty(agent, buildingColliders);
+          } else if (destType === "marriage_hall" || agent.pendingMarry) {
+            const pending = agent.pendingMarry;
+            agent.pendingMarry = null;
+            doMarry(
+              agent,
+              pending || { target: null },
+              agents,
+              buildingColliders,
+              pushChat
+            );
           }
           // Immediately pick next goal so they don't stand still.
-          planLocally(agent);
+          if (!agent.inConversation) {
+            planLocally(agent);
+          }
+        }
+      }
+
+      // Kids grow into adults
+      if (agent.isChild) {
+        agent.growTimer = (agent.growTimer || 0) + deltaSeconds;
+        if (agent.growTimer >= KID_GROW_SEC) {
+          agent.isChild = false;
+          agent.visual.scale.set(1);
+          agent.personality = `${agent.name}, grown child of ${
+            agent.parentIds?.length
+              ? "their parents"
+              : "the city"
+          }; ready for adult life`;
+          say(agent, "I grew up!", 3);
+          pushChat(agent.name, "all", "I grew up!");
+        } else {
+          // Young kids trail a living parent
+          const parent = agents.find(
+            (p) =>
+              agent.parentIds?.includes(p.id) &&
+              p.stats.alive &&
+              !p.stats.inJail
+          );
+          if (parent && Math.random() < 0.02) {
+            agent.targetX = parent.x + random(-30, 30);
+            agent.targetY = parent.y + random(-30, 30);
+          }
         }
       }
 
       // Periodic LLM “personality” pass (does not gate movement).
-      if (!agent.thinking) {
+      if (!agent.thinking && !agent.inConversation) {
         agent.thinkTimer -= deltaSeconds;
         if (agent.thinkTimer <= 0) {
           thinkWithLlm(agent);
         }
       }
     }
+
+    tickFamilies(agents, deltaSeconds, createKid, pushChat);
   }
 
-  const PLAYER_LINES = [
-    "Hey, how's it going?",
-    "Any work around here?",
-    "Stay safe out there.",
-    "Got tips for making money?",
-    "Watch out for the cops.",
-    "Need a partner?",
-    "What's your story?",
-    "I'm the new person in town."
-  ];
-  let playerLineIndex = 0;
-
   /**
-   * Human player talks to the nearest living agent (key T).
+   * Start (or end) a face-to-face conversation with nearest agent (key T).
+   * Agent freezes; player types free-form messages.
    */
   function playerTalkToNearest() {
     const player = getPlayer();
@@ -757,10 +1024,16 @@ export function createAgentSystem({
       return false;
     }
 
+    // Toggle off if already chatting
+    if (conversationAgent) {
+      endConversation(false);
+      return true;
+    }
+
     let nearest = null;
     let best = AGENT_PLAYER_TALK_RANGE;
     for (const a of agents) {
-      if (!a.stats.alive || a.stats.inJail) {
+      if (!a.stats.alive || a.stats.inJail || a.inConversation) {
         continue;
       }
       const d = dist(player.x, player.y, a.x, a.y);
@@ -771,50 +1044,40 @@ export function createAgentSystem({
     }
 
     if (!nearest) {
-      setPlayerMessage(pStats, "No one nearby to talk to. Get closer to an agent.", 2);
+      setPlayerMessage(
+        pStats,
+        "No one nearby. Stand closer to an agent, then press T.",
+        2.5
+      );
       return false;
     }
 
-    const line = PLAYER_LINES[playerLineIndex % PLAYER_LINES.length];
-    playerLineIndex += 1;
-    lastPlayerLine = line;
-    lastPlayerLineAt = performance.now();
-
-    pushChat("You", nearest.name, line);
-    setPlayerMessage(pStats, `You → ${nearest.name}: "${line}"`, 3);
-
-    // Face each other a bit
+    conversationAgent = nearest;
+    conversationBusy = false;
+    conversationHistory.length = 0;
+    nearest.inConversation = true;
+    nearest.targetX = null;
+    nearest.targetY = null;
+    nearest.targetType = null;
+    nearest.currentAction = "talking";
     nearest.rotation =
       Math.atan2(player.y - nearest.y, player.x - nearest.x) + Math.PI / 2;
 
-    // Agent always replies to the player
-    const replies = [
-      `Hey! I'm ${nearest.name}. Good to meet you.`,
-      `Hi there. I'm at $${nearest.stats.money} right now.`,
-      "Jobs pay, but hunger never stops.",
-      "Careful — cops only chase if they see you.",
-      "I'm trying to buy property when I can.",
-      "Need food? Hit a market or restaurant.",
-      `Stay fed. Hunger is ${Math.round(nearest.stats.hunger)}% for me.`,
-      "We can borrow cash or guns if we're close.",
-      "Nice to have another human around.",
-      "Don't starve. Seriously."
-    ];
-    const reply = replies[Math.floor(Math.random() * replies.length)];
+    const greeting = `Hey! I'm ${nearest.name}. What's on your mind?`;
+    conversationHistory.push({ from: nearest.name, text: greeting });
+    say(nearest, greeting, 8);
+    pushChat(nearest.name, "You", greeting);
 
-    setTimeout(() => {
-      if (!nearest.stats.alive) {
-        return;
-      }
-      say(nearest, reply, 5);
-      pushChat(nearest.name, "You", reply);
-      setPlayerMessage(pStats, `${nearest.name}: "${reply}"`, 4);
-      nearest.lastResult = "talked to player";
-    }, 600 + Math.random() * 500);
+    convoUi.open(nearest.name);
+    convoUi.addLine("System", `${nearest.name} stopped to talk. Type below.`, "system");
+    convoUi.addLine(nearest.name, greeting, "agent");
 
-    // Nudge agent to stay social next plan
-    nearest.thinkTimer = Math.min(nearest.thinkTimer, 2);
-
+    setPlayerMessage(
+      pStats,
+      `Chatting with ${nearest.name}. Type a message — Esc or T to leave.`,
+      3
+    );
+    nearest.lastResult = "in conversation with player";
     return true;
   }
 
@@ -822,6 +1085,8 @@ export function createAgentSystem({
     agents,
     updateAgents,
     playerTalkToNearest,
+    isInConversation,
+    endConversation,
     getWantedSubjects: () =>
       agents
         .filter((a) => a.stats.alive && a.stats.wanted && !a.stats.inJail)

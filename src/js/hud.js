@@ -86,9 +86,9 @@ export function createHUD({
 
   const instructions = new PIXI.Text({
     text:
-      "WASD · E job · J eat · P property · T talk\n" +
-      "1–5 gun · F shoot vault/NPC · M map · C chat\n" +
-      "BANK (gold) · shoot vault +$10000 · security!",
+      "WASD · T talk · E job · J eat · P property\n" +
+      "Marriage Hall: AI marry · kids/30s · divorce\n" +
+      "F shoot · M map · C chat · N net worth",
     style: textStyle(13, 0xffffff, { lineHeight: 17 })
   });
 
@@ -616,8 +616,11 @@ export function createHUD({
 
       const lines = withNw.map((row, i) => {
         const rank = i + 1;
-        const dead = row.agent.stats?.alive === false ? " †" : "";
-        return `${rank}. ${row.agent.name}${dead}    $${row.netWorth}`;
+        const a = row.agent;
+        const dead = a.stats?.alive === false ? " †" : "";
+        const ring = a.spouseName ? ` ♥${a.spouseName}` : "";
+        const kid = a.isChild ? " 👶" : "";
+        return `${rank}. ${a.name}${kid}${dead}${ring}  $${row.netWorth}`;
       });
       agentPanel.text = lines.length
         ? lines.join("\n")

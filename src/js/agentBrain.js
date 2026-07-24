@@ -20,7 +20,7 @@ export function buildAgentPrompt(agent, worldContext) {
   const others = worldContext.nearbyAgents
     .map(
       (a) =>
-        `${a.name}${a.isPlayer ? " [HUMAN PLAYER]" : ""} ($${a.money}, guns:[${(a.guns || []).join(",") || "none"}], hunger ${Math.round(a.hunger)}%) dist=${Math.round(a.dist)} said:"${a.lastSpeech || ""}"`
+        `${a.name}${a.isPlayer ? " [HUMAN PLAYER]" : ""}${a.married ? ` [married→${a.spouse}]` : ""}${a.isChild ? " [child]" : ""} ($${a.money}, guns:[${(a.guns || []).join(",") || "none"}], hunger ${Math.round(a.hunger)}%) dist=${Math.round(a.dist)} said:"${a.lastSpeech || ""}"`
     )
     .join("; ");
 
@@ -52,6 +52,9 @@ STATE:
 - job: ${job}
 - guns owned: ${gunsOwned}
 - equipped: ${agent.stats.equippedGunId || "none"}
+- married: ${agent.spouseId ? `yes, to ${agent.spouseName}` : "no"}
+- isChild: ${Boolean(agent.isChild)}
+- kids: ${(agent.childIds || []).length}
 - wanted: ${agent.stats.wanted}
 - inJail: ${agent.stats.inJail} (jailTimer=${agent.stats.jailTimer?.toFixed?.(1) || 0}s)
 - position: (${Math.round(agent.x)}, ${Math.round(agent.y)})
@@ -73,10 +76,15 @@ Valid actions (pick ONE primary action):
 - buy_property — buy FOR SALE property
 - borrow_money — ask nearby agent for cash; sayTo = their name; amount optional
 - borrow_gun — ask nearby agent for a weapon; sayTo = their name
+- marry — go to Marriage Hall and marry a single adult; sayTo/target = partner name
+- divorce — leave your spouse (tool: always available if married)
 - shoot — shoot nearest NPC (WANTED if seen)
 - bribe — if in jail and money >= 250
 - talk — speak; sayTo = agent name OR "You" for the human player
 - wait — stand still
+
+Kids cannot marry. Married couples can have up to 2 kids automatically over time.
+Divorce is an explicit tool/action when unhappy.
 
 Reply with ONLY compact JSON (no markdown):
 {"thought":"short","say":"speech max 80 chars or null","sayTo":"You or agent name or null","action":"one of list","target":"optional","amount":0,"item":null}`;
@@ -308,6 +316,32 @@ export function fallbackDecision(agent, worldContext) {
     };
   }
 
+  // Marriage / divorce
+  if (!agent.isChild && agent.spouseId && Math.random() < 0.04) {
+    return {
+      thought: "End marriage",
+      say: "This isn't working.",
+      sayTo: agent.spouseName,
+      action: "divorce",
+      target: null
+    };
+  }
+
+  if (!agent.isChild && !agent.spouseId && Math.random() < 0.12) {
+    const single = worldContext.nearbyAgents.find(
+      (a) => !a.isPlayer && !a.married && !a.isChild
+    );
+    return {
+      thought: "Get married at the hall",
+      say: single
+        ? `${single.name}, marry me?`
+        : "Looking for love at the Marriage Hall.",
+      sayTo: single?.name || null,
+      action: "marry",
+      target: single?.name?.toLowerCase() || null
+    };
+  }
+
   // Prefer talking to the human when nearby
   if (worldContext.playerNearby && Math.random() < 0.55) {
     return {
@@ -401,4 +435,92 @@ export async function requestAgentDecision(prompt) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Free-form chat reply (plain text, not JSON action).
+ */
+export async function requestChatReply(agent, playerLine, history = []) {
+  const hist = history
+    .slice(-6)
+    .map((h) => `${h.from}: ${h.text}`)
+    .join("\n");
+
+  const prompt = `You are ${agent.name}, a citizen in a city game.
+Personality: ${agent.personality}
+Your status: money $${agent.stats.money}, hunger ${Math.round(agent.stats.hunger)}%, job ${agent.stats.job?.title || "none"}.
+
+You are in a face-to-face conversation with the human player.
+Recent chat:
+${hist || "(start of talk)"}
+
+Player just said: "${playerLine}"
+
+Reply in ONE short spoken line (max 100 characters). Stay in character. No JSON, no quotes around the whole reply, no stage directions.`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const res = await fetch("/api/agent/decide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    let text = (data.text || "").trim();
+    // Strip wrapping quotes / code fences
+    text = text.replace(/^```[\s\S]*?```$/g, "").trim();
+    text = text.replace(/^["'“”]|["'“”]$/g, "").trim();
+    // If model returned JSON by mistake, pull "say"
+    if (text.startsWith("{")) {
+      try {
+        const obj = JSON.parse(text);
+        text = obj.say || obj.reply || obj.text || text;
+      } catch {
+        /* keep text */
+      }
+    }
+    text = String(text).slice(0, 120);
+    return text || null;
+  } catch (err) {
+    console.warn("[agent chat]", err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function fallbackChatReply(agent, playerLine) {
+  const line = (playerLine || "").toLowerCase();
+  if (/money|cash|broke|loan|borrow/.test(line)) {
+    return `I've got about $${agent.stats.money}. Work shifts help.`;
+  }
+  if (/job|work|hire/.test(line)) {
+    return agent.stats.job
+      ? `I'm a ${agent.stats.job.title}. Pays okay.`
+      : "Still looking for work myself.";
+  }
+  if (/gun|weapon|shoot|bank/.test(line)) {
+    return "Guns and banks mean heat. Be careful.";
+  }
+  if (/food|hungry|eat/.test(line)) {
+    return "Markets and restaurants. Don't let hunger hit zero.";
+  }
+  if (/hi|hey|hello|how are/.test(line)) {
+    return `Hey! I'm ${agent.name}. Good to talk.`;
+  }
+  const generic = [
+    "Interesting. Tell me more.",
+    "Yeah, this city never sleeps.",
+    "I hear you.",
+    `Stay safe out there — I'm ${agent.name}.`,
+    "True enough. Gotta keep moving soon.",
+    "Ha. Fair point."
+  ];
+  return generic[Math.floor(Math.random() * generic.length)];
 }

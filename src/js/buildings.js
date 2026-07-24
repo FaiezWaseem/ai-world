@@ -273,6 +273,23 @@ function decorateJail(graphics, x, y, width, height, theme) {
     .fill({ color: 0x1e293b });
 }
 
+function decorateMarriageHall(graphics, x, y, width, height, theme) {
+  // Aisle
+  graphics
+    .roundRect(x + width / 2 - 14, y + 40, 28, height - 55, 6)
+    .fill({ color: 0xfdf2f8 });
+  // Arch
+  graphics
+    .ellipse(x + width / 2, y + 48, 40, 22)
+    .stroke({ color: theme.accent, width: 4 });
+  // Hearts
+  graphics.circle(x + 28, y + height / 2, 8).fill({ color: 0xfb7185 });
+  graphics.circle(x + width - 28, y + height / 2, 8).fill({ color: 0xfb7185 });
+  graphics
+    .roundRect(x + width / 2 - 16, y + height - 30, 32, 22, 4)
+    .fill({ color: theme.roof });
+}
+
 function decorateBank(graphics, x, y, width, height, theme) {
   // Gold vault door
   graphics
@@ -454,6 +471,8 @@ export function createBuilding(
     decorateJail(building, x, y, width, height, theme);
   } else if (type === "bank") {
     decorateBank(building, x, y, width, height, theme);
+  } else if (type === "marriage_hall") {
+    decorateMarriageHall(building, x, y, width, height, theme);
   } else if (type === "house") {
     decorateHouse(building, x, y, width, height, theme);
   } else if (type === "apartment") {
@@ -469,6 +488,7 @@ export function createBuilding(
     forSale &&
     type !== "jail" &&
     type !== "bank" &&
+    type !== "marriage_hall" &&
     type !== "school" &&
     type !== "gunshop";
 

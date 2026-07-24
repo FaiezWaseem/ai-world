@@ -177,7 +177,7 @@ import { createTrafficSystem } from "./traffic.js";
   if (!didLoad) {
     setPlayerMessage(
       stats,
-      `${agentCount} AI citizens online. Walk near them — they talk to you. Press T to chat back.`,
+      `${agentCount} AI online. Stand near one and press T — type to chat. Esc ends.`,
       5
     );
   }
@@ -234,6 +234,8 @@ import { createTrafficSystem } from "./traffic.js";
       setPlayerMessage(stats, on ? "Net worth shown" : "Net worth hidden", 1.2);
     }
 
+    const chatting = agents.isInConversation();
+
     updatePlayerStats(stats, deltaSeconds);
     updateCombat(stats, deltaSeconds);
     tickPropertyRent(stats, "player", buildingColliders, deltaSeconds);
@@ -241,13 +243,18 @@ import { createTrafficSystem } from "./traffic.js";
 
     traffic.updateTrafficLights(deltaSeconds);
     cars.updateCars(deltaSeconds);
-    updatePlayer(
-      player,
-      stats,
-      input.keys,
-      collision.moveEntity,
-      deltaSeconds
-    );
+
+    // Freeze player movement while in a typed conversation
+    if (!chatting) {
+      updatePlayer(
+        player,
+        stats,
+        input.keys,
+        collision.moveEntity,
+        deltaSeconds
+      );
+    }
+
     npcs.updateNPCs(deltaSeconds);
     agents.updateAgents(deltaSeconds);
     bank.update(deltaSeconds);
@@ -255,63 +262,69 @@ import { createTrafficSystem } from "./traffic.js";
     updateCamera(app, world, player, deltaSeconds);
 
     const nearby = findNearbyPoi(player, buildingColliders);
-    const prompt = getInteractionPrompt(stats, nearby);
+    const prompt = chatting
+      ? "In conversation — type below · Esc or T to leave"
+      : getInteractionPrompt(stats, nearby);
+
+    // T always available to start/end chat (even if other keys blocked)
+    if (stats.alive && !stats.inJail && input.consumePress("KeyT")) {
+      agents.playerTalkToNearest();
+    }
 
     if (stats.alive && stats.inJail && input.consumePress("KeyB")) {
       police.tryBribe();
     }
 
-    if (stats.alive && !stats.inJail && input.consumePress("KeyE")) {
-      tryJobInteract(stats, nearby);
-    }
+    // Block game hotkeys while typing in the chat panel
+    if (!chatting) {
+      if (stats.alive && !stats.inJail && input.consumePress("KeyE")) {
+        tryJobInteract(stats, nearby);
+      }
 
-    if (stats.alive && !stats.inJail && input.consumePress("KeyJ")) {
-      tryEatInteract(stats, nearby);
-    }
+      if (stats.alive && !stats.inJail && input.consumePress("KeyJ")) {
+        tryEatInteract(stats, nearby);
+      }
 
-    if (stats.alive && !stats.inJail && input.consumePress("KeyP")) {
-      tryBuyProperty(stats, nearby);
-    }
+      if (stats.alive && !stats.inJail && input.consumePress("KeyP")) {
+        tryBuyProperty(stats, nearby);
+      }
 
-    if (stats.alive && !stats.inJail && input.consumePress("KeyT")) {
-      agents.playerTalkToNearest();
-    }
+      if (stats.alive && !stats.inJail && input.consumePress("KeyQ")) {
+        cycleGun(stats);
+      }
 
-    if (stats.alive && !stats.inJail && input.consumePress("KeyQ")) {
-      cycleGun(stats);
-    }
+      if (
+        stats.alive &&
+        !stats.inJail &&
+        (input.consumePress("KeyF") || input.consumePress("Space"))
+      ) {
+        tryShoot(
+          stats,
+          player,
+          npcs,
+          effectsLayer,
+          () => {
+            police.reportMurder();
+          },
+          bank,
+          (crimeX, crimeY) => {
+            police.reportCrimeAt(
+              crimeX,
+              crimeY,
+              stats,
+              player,
+              "player",
+              "You"
+            );
+          }
+        );
+      }
 
-    if (
-      stats.alive &&
-      !stats.inJail &&
-      (input.consumePress("KeyF") || input.consumePress("Space"))
-    ) {
-      tryShoot(
-        stats,
-        player,
-        npcs,
-        effectsLayer,
-        () => {
-          police.reportMurder();
-        },
-        bank,
-        (crimeX, crimeY) => {
-          police.reportCrimeAt(
-            crimeX,
-            crimeY,
-            stats,
-            player,
-            "player",
-            "You"
-          );
-        }
-      );
-    }
-
-    if (stats.alive && !stats.inJail) {
-      for (let i = 0; i < buyGunKeys.length; i++) {
-        if (input.consumePress(buyGunKeys[i])) {
-          tryBuyGun(stats, nearby, i % GUNS.length);
+      if (stats.alive && !stats.inJail) {
+        for (let i = 0; i < buyGunKeys.length; i++) {
+          if (input.consumePress(buyGunKeys[i])) {
+            tryBuyGun(stats, nearby, i % GUNS.length);
+          }
         }
       }
     }

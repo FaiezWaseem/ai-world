@@ -149,6 +149,16 @@ export const SPECIAL_BUILDINGS = {
     count: 1,
     forSale: false
   },
+  marriage_hall: {
+    label: "MARRIAGE HALL",
+    color: 0xfbcfe8,
+    roof: 0xbe185d,
+    accent: 0xf472b6,
+    window: 0xfdf2f8,
+    minimap: 0xec4899,
+    count: 1,
+    forSale: false
+  },
   // Buyable real estate
   house: {
     label: "HOUSE",
@@ -220,6 +230,12 @@ export const BANK_SECURITY_PATROL_RADIUS = 220;
 export const BANK_SECURITY_CHASE_BLOCKS = 2;
 export const BANK_SECURITY_CHASE_RADIUS =
   CELL_SIZE * BANK_SECURITY_CHASE_BLOCKS;
+
+/** Marriage / family */
+export const MARRIAGE_RANGE = 70;
+export const KID_INTERVAL_SEC = 30;
+export const MAX_KIDS_PER_COUPLE = 2;
+export const KID_GROW_SEC = 90;
 
 /**
  * Guns for sale at GUN SHOP (buy with 1–5 while nearby).

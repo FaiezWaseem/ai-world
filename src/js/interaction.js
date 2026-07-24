@@ -117,6 +117,11 @@ function buildPrompt(stats, poi) {
     }
   }
 
+  if (poi.type === "marriage_hall") {
+    lines.push("AI couples marry here · kids every 30s (max 2)");
+    lines.push("Agents can also divorce later");
+  }
+
   if (job) {
     const employedHere =
       stats.job &&
