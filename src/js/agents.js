@@ -506,15 +506,30 @@ export function createAgentSystem({
     return attachAgent(agent, visual);
   }
 
+  function blendColors(a, b) {
+    const ca = Number(a) || 0xaaaaaa;
+    const cb = Number(b) || 0xaaaaaa;
+    const ar = (ca >> 16) & 0xff;
+    const ag = (ca >> 8) & 0xff;
+    const ab = ca & 0xff;
+    const br = (cb >> 16) & 0xff;
+    const bg = (cb >> 8) & 0xff;
+    const bb = cb & 0xff;
+    return (
+      (((ar + br) >> 1) << 16) |
+      (((ag + bg) >> 1) << 8) |
+      ((ab + bb) >> 1)
+    );
+  }
+
   function createKid(parentA, parentB) {
     const name = KID_NAMES[kidNameIndex % KID_NAMES.length];
     kidNameIndex += 1;
-    // Blend colors
-    const color =
-      ((parentA.color & 0xfefefe) + (parentB.color & 0xfefefe)) / 2;
-    const colorInt = Math.floor(color) & 0xffffff;
+    const colorInt = blendColors(parentA.color, parentB.color);
     const visual = createAgentVisual(colorInt, name);
-    visual.scale.set(0.72);
+    if (visual.scale?.set) {
+      visual.scale.set(0.72);
+    }
     visual.x = (parentA.x + parentB.x) / 2 + random(-20, 20);
     visual.y = (parentA.y + parentB.y) / 2 + random(-20, 20);
 
@@ -556,11 +571,20 @@ export function createAgentSystem({
 
     parentA.childIds = parentA.childIds || [];
     parentB.childIds = parentB.childIds || [];
-    parentA.childIds.push(id);
-    parentB.childIds.push(id);
+    if (!parentA.childIds.includes(id)) {
+      parentA.childIds.push(id);
+    }
+    if (!parentB.childIds.includes(id)) {
+      parentB.childIds.push(id);
+    }
 
     attachAgent(kid, visual);
     say(kid, "Hi!", 3);
+
+    // Give kid an initial wander so they move
+    kid.targetX = kid.x + random(-80, 80);
+    kid.targetY = kid.y + random(-80, 80);
+
     return kid;
   }
 

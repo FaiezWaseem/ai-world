@@ -236,8 +236,10 @@ export const BANK_SECURITY_CHASE_RADIUS =
 
 /** Marriage / family */
 export const MARRIAGE_RANGE = 70;
+/** Seconds between births for a married couple (max MAX_KIDS_PER_COUPLE). */
 export const KID_INTERVAL_SEC = 30;
 export const MAX_KIDS_PER_COUPLE = 2;
+/** Child grows into adult after this many seconds. */
 export const KID_GROW_SEC = 90;
 
 /**

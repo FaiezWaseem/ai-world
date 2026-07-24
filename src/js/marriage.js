@@ -6,6 +6,9 @@ import {
 } from "./config.js";
 import { edgeDistToBuilding, say } from "./agentActions.js";
 
+/** coupleKey -> seconds since last birth (or since marriage) */
+const coupleKidTimers = new Map();
+
 function atMarriageHall(agent, buildingColliders) {
   for (const b of buildingColliders) {
     if (b.type !== "marriage_hall") {
@@ -30,6 +33,10 @@ function findAgentByName(agents, name) {
   return (
     agents.find((a) => a.name.toLowerCase() === n && a.stats.alive) || null
   );
+}
+
+function coupleKey(idA, idB) {
+  return idA < idB ? `${idA}::${idB}` : `${idB}::${idA}`;
 }
 
 /**
@@ -78,22 +85,20 @@ export function doMarry(agent, decision, agents, buildingColliders, pushChat) {
   }
 
   if (!atMarriageHall(partner, buildingColliders)) {
-    // Partner must also be near the hall
     agent.lastResult = `${partner.name} not at hall`;
     say(agent, `${partner.name}, come to the Marriage Hall!`, 3);
     say(partner, "On my way to the hall…", 3);
-    // Nudge partner toward hall center
     partner.targetX = hall.x + hall.width / 2;
     partner.targetY = hall.y + hall.height / 2;
     partner.targetType = "marriage_hall";
     return false;
   }
 
-  // Accept chance — friendly personalities more likely
+  // High accept rate so marriages actually stick for family sim
   const accept =
     Math.random() <
-    0.55 +
-      (partner.personality?.includes("friendly") ? 0.25 : 0) +
+    0.75 +
+      (partner.personality?.includes("friendly") ? 0.15 : 0) +
       (agent.personality?.includes("friendly") ? 0.1 : 0);
 
   if (!accept) {
@@ -108,12 +113,16 @@ export function doMarry(agent, decision, agents, buildingColliders, pushChat) {
   agent.spouseId = partner.id;
   agent.spouseName = partner.name;
   agent.childIds = agent.childIds || [];
-  agent.kidTimer = 0;
+  agent.marriedAt = performance.now();
 
   partner.spouseId = agent.id;
   partner.spouseName = agent.name;
   partner.childIds = partner.childIds || [];
-  partner.kidTimer = 0;
+  partner.marriedAt = performance.now();
+
+  // Fresh couple timer for kids
+  const key = coupleKey(agent.id, partner.id);
+  coupleKidTimers.set(key, 0);
 
   agent.lastResult = `married ${partner.name}`;
   partner.lastResult = `married ${agent.name}`;
@@ -123,6 +132,9 @@ export function doMarry(agent, decision, agents, buildingColliders, pushChat) {
   pushChat(agent.name, partner.name, "We're married!");
   pushChat(partner.name, agent.name, "I do!");
   pushChat("System", "all", `${agent.name} ❤️ ${partner.name} got married!`);
+  console.log(
+    `[family][married][${agent.name}+${partner.name}] kids in ${KID_INTERVAL_SEC}s`
+  );
 
   return true;
 }
@@ -141,24 +153,35 @@ export function doDivorce(agent, agents, pushChat) {
   const spouseName = agent.spouseName || spouse?.name || "them";
 
   if (spouse) {
+    coupleKidTimers.delete(coupleKey(agent.id, spouse.id));
     spouse.spouseId = null;
     spouse.spouseName = null;
-    spouse.kidTimer = 0;
+    spouse.marriedAt = null;
     say(spouse, `${agent.name} divorced me…`, 4);
     pushChat(spouse.name, agent.name, "We're divorced.");
   }
 
   agent.spouseId = null;
   agent.spouseName = null;
-  agent.kidTimer = 0;
+  agent.marriedAt = null;
 
-  // Kids keep parent links; no longer a "couple" for new births
   agent.lastResult = `divorced ${spouseName}`;
   say(agent, `Divorced ${spouseName}.`, 4);
   pushChat(agent.name, spouseName, "I want a divorce.");
   pushChat("System", "all", `${agent.name} divorced ${spouseName}.`);
+  console.log(`[family][divorce][${agent.name}+${spouseName}]`);
 
   return true;
+}
+
+function countLivingKids(agents, parentA, parentB) {
+  return agents.filter(
+    (c) =>
+      c.stats?.alive &&
+      Array.isArray(c.parentIds) &&
+      c.parentIds.includes(parentA.id) &&
+      c.parentIds.includes(parentB.id)
+  ).length;
 }
 
 /**
@@ -166,63 +189,80 @@ export function doDivorce(agent, agents, pushChat) {
  * createKidFn(parentA, parentB) => new agent | null
  */
 export function tickFamilies(agents, deltaSeconds, createKidFn, pushChat) {
-  // Process each couple once (lower id initiates)
-  const seen = new Set();
+  const processed = new Set();
 
   for (const agent of agents) {
-    if (!agent.stats.alive || !agent.spouseId || agent.isChild) {
-      continue;
-    }
-    if (seen.has(agent.id)) {
+    if (!agent?.stats?.alive || !agent.spouseId || agent.isChild) {
       continue;
     }
 
     const spouse = findAgentById(agents, agent.spouseId);
-    if (!spouse || !spouse.stats.alive || spouse.spouseId !== agent.id) {
-      // Broken link
-      if (!spouse || spouse.spouseId !== agent.id) {
-        agent.spouseId = null;
-        agent.spouseName = null;
-      }
+    if (!spouse?.stats?.alive) {
+      continue;
+    }
+    // Mutual marriage required
+    if (spouse.spouseId !== agent.id) {
       continue;
     }
 
-    seen.add(agent.id);
-    seen.add(spouse.id);
+    const key = coupleKey(agent.id, spouse.id);
+    if (processed.has(key)) {
+      continue;
+    }
+    processed.add(key);
 
-    const pairKey = [agent.id, spouse.id].sort().join(":");
-    // Use timer on the agent with smaller id
-    const timerHost =
-      agent.id < spouse.id ? agent : spouse;
-    timerHost.kidTimer = (timerHost.kidTimer || 0) + deltaSeconds;
-
-    const kidsA = agent.childIds || [];
-    const kidsB = spouse.childIds || [];
-    // Count living shared kids
-    const livingKids = agents.filter(
-      (c) =>
-        c.isChild &&
-        c.stats.alive &&
-        c.parentIds &&
-        c.parentIds.includes(agent.id) &&
-        c.parentIds.includes(spouse.id)
-    );
-
-    if (livingKids.length >= MAX_KIDS_PER_COUPLE) {
+    const livingKids = countLivingKids(agents, agent, spouse);
+    if (livingKids >= MAX_KIDS_PER_COUPLE) {
       continue;
     }
 
-    if (timerHost.kidTimer >= KID_INTERVAL_SEC) {
-      timerHost.kidTimer = 0;
-      const kid = createKidFn(agent, spouse);
-      if (kid) {
-        pushChat(
-          "System",
-          "all",
-          `${agent.name} & ${spouse.name} had a kid: ${kid.name}!`
+    const prev = coupleKidTimers.get(key) || 0;
+    const next = prev + deltaSeconds;
+    coupleKidTimers.set(key, next);
+
+    if (next >= KID_INTERVAL_SEC) {
+      coupleKidTimers.set(key, 0);
+      try {
+        const kid = createKidFn(agent, spouse);
+        if (kid) {
+          console.log(
+            `[family][birth][${agent.name}+${spouse.name}→${kid.name}] (${livingKids + 1}/${MAX_KIDS_PER_COUPLE})`
+          );
+          pushChat(
+            "System",
+            "all",
+            `${agent.name} & ${spouse.name} had a kid: ${kid.name}!`
+          );
+          say(agent, `Our kid ${kid.name}!`, 4);
+          say(spouse, `Welcome ${kid.name}!`, 4);
+        } else {
+          console.warn(
+            `[family][birth_fail][${agent.name}+${spouse.name}] createKid returned null`
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[family][birth_error][${agent.name}+${spouse.name}]`,
+          err
         );
-        say(agent, `Our kid ${kid.name}!`, 4);
-        say(spouse, `Welcome ${kid.name}!`, 4);
+      }
+    }
+  }
+
+  // Drop timers for couples that no longer exist
+  for (const key of coupleKidTimers.keys()) {
+    if (!processed.has(key)) {
+      // Keep timer only if both still married to each other
+      const [idA, idB] = key.split("::");
+      const a = findAgentById(agents, idA);
+      const b = findAgentById(agents, idB);
+      if (
+        !a?.spouseId ||
+        !b?.spouseId ||
+        a.spouseId !== b.id ||
+        b.spouseId !== a.id
+      ) {
+        coupleKidTimers.delete(key);
       }
     }
   }
@@ -230,4 +270,8 @@ export function tickFamilies(agents, deltaSeconds, createKidFn, pushChat) {
 
 export function findMarriageHall(buildingColliders) {
   return buildingColliders.find((b) => b.type === "marriage_hall") || null;
+}
+
+export function getCoupleKidTimer(idA, idB) {
+  return coupleKidTimers.get(coupleKey(idA, idB)) || 0;
 }

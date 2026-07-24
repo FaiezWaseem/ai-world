@@ -357,8 +357,8 @@ export function fallbackDecision(agent, worldContext) {
     };
   }
 
-  // Marriage / divorce
-  if (!agent.isChild && agent.spouseId && Math.random() < 0.04) {
+  // Divorce is rare so couples have time for kids (30s × up to 2)
+  if (!agent.isChild && agent.spouseId && Math.random() < 0.008) {
     return {
       thought: "End marriage",
       say: "This isn't working.",
