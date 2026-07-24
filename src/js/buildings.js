@@ -273,6 +273,31 @@ function decorateJail(graphics, x, y, width, height, theme) {
     .fill({ color: 0x1e293b });
 }
 
+function decorateBank(graphics, x, y, width, height, theme) {
+  // Gold vault door
+  graphics
+    .circle(x + width / 2, y + height / 2 + 8, Math.min(width, height) * 0.22)
+    .fill({ color: 0xfacc15 })
+    .stroke({ color: 0x854d0e, width: 4 });
+  graphics
+    .circle(x + width / 2, y + height / 2 + 8, 8)
+    .fill({ color: 0x713f12 });
+
+  // Columns
+  graphics
+    .rect(x + 16, y + 36, 12, height - 56)
+    .fill({ color: theme.roof });
+  graphics
+    .rect(x + width - 28, y + 36, 12, height - 56)
+    .fill({ color: theme.roof });
+
+  // "$" pediment bar
+  graphics
+    .roundRect(x + width / 2 - 22, y + 22, 44, 20, 4)
+    .fill({ color: 0x0f172a, alpha: 0.9 })
+    .stroke({ color: theme.accent, width: 2 });
+}
+
 function decorateHouse(graphics, x, y, width, height, theme) {
   // Roof triangle feel via dark band
   graphics
@@ -427,6 +452,8 @@ export function createBuilding(
     decorateGunShop(building, x, y, width, height, theme);
   } else if (type === "jail") {
     decorateJail(building, x, y, width, height, theme);
+  } else if (type === "bank") {
+    decorateBank(building, x, y, width, height, theme);
   } else if (type === "house") {
     decorateHouse(building, x, y, width, height, theme);
   } else if (type === "apartment") {
@@ -437,9 +464,13 @@ export function createBuilding(
 
   const forSale =
     Boolean(theme?.forSale) || (!type && shouldListGenericForSale());
-  // Jail / active civic buildings are never sold.
+  // Jail / bank / civic buildings are never sold.
   const canSell =
-    forSale && type !== "jail" && type !== "school" && type !== "gunshop";
+    forSale &&
+    type !== "jail" &&
+    type !== "bank" &&
+    type !== "school" &&
+    type !== "gunshop";
 
   const price = canSell
     ? computePropertyPrice(width, height, type)
@@ -480,7 +511,7 @@ export function createBuilding(
     addBuildingLabel(labelLayer, x, y, width, height, single);
   }
 
-  buildingColliders.push({
+  const entry = {
     x,
     y,
     width,
@@ -494,5 +525,13 @@ export function createBuilding(
     rentIncome,
     owner: null,
     ownerName: null
-  });
+  };
+
+  if (type === "bank") {
+    entry.vaultHp = null; // filled by bank system from config
+    entry.looted = false;
+    entry.isBank = true;
+  }
+
+  buildingColliders.push(entry);
 }

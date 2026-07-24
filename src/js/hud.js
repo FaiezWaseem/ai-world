@@ -86,9 +86,9 @@ export function createHUD({
 
   const instructions = new PIXI.Text({
     text:
-      "WASD · E job · J eat · P property · T talk to agent\n" +
-      "1–5 gun · F shoot · M map · C chat · N net worth\n" +
-      "Agents greet you nearby · B bribe · K/L save",
+      "WASD · E job · J eat · P property · T talk\n" +
+      "1–5 gun · F shoot vault/NPC · M map · C chat\n" +
+      "BANK (gold) · shoot vault +$10000 · security!",
     style: textStyle(13, 0xffffff, { lineHeight: 17 })
   });
 

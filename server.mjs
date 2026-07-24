@@ -18,7 +18,7 @@ const BASE_URL = (process.env.BASE_URL || "https://api.flash-router.site/v1").re
   ""
 );
 const API_KEY = process.env.API_KEY || "";
-const MODEL = process.env.MODEL || "gpt-5.5";
+const MODEL = process.env.MODEL || "gpt-5.4";
 const AGENT_COUNT = Number(process.env.AGENT_COUNT || 4);
 
 const MIME = {

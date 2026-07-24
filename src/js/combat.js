@@ -56,9 +56,17 @@ function distPointToSegment(px, py, x1, y1, x2, y2) {
 
 /**
  * Fire equipped gun toward facing direction.
- * Returns shot visual data or null.
+ * Can hit NPCs or the bank vault (via bankSystem).
  */
-export function tryShoot(stats, player, npcSystem, effectsLayer, onKill) {
+export function tryShoot(
+  stats,
+  player,
+  npcSystem,
+  effectsLayer,
+  onKill,
+  bankSystem = null,
+  onBankCrime = null
+) {
   if (!stats.alive || stats.inJail) {
     return null;
   }
@@ -111,11 +119,49 @@ export function tryShoot(stats, player, npcSystem, effectsLayer, onKill) {
     }
   }
 
+  // Prefer bank vault if the ray hits it closer than the NPC
+  let bankHit = null;
+  if (bankSystem?.tryHitBank) {
+    // Peek without applying damage first by checking geometry only inside tryHitBank
+    // tryHitBank applies damage — call only if bank is closer or no NPC
+    const bank = bankSystem.getBank?.();
+    if (bank && !bank.looted) {
+      let bankDist = null;
+      const steps = 24;
+      for (let i = 1; i <= steps; i++) {
+        const t = (i / steps) * gun.range;
+        const px = player.x + aim.x * t;
+        const py = player.y + aim.y * t;
+        if (
+          px >= bank.x &&
+          px <= bank.x + bank.width &&
+          py >= bank.y &&
+          py <= bank.y + bank.height
+        ) {
+          bankDist = t;
+          break;
+        }
+      }
+      if (bankDist != null && bankDist < bestDist) {
+        bankHit = bankSystem.tryHitBank(player, gun, stats, onBankCrime);
+        bestNpc = null;
+        bestDist = bankDist;
+      }
+    }
+  }
+
   // Muzzle flash / tracer
   if (effectsLayer) {
     const beam = new PIXI.Graphics();
-    const hitX = bestNpc ? bestNpc.x : endX;
-    const hitY = bestNpc ? bestNpc.y : endY;
+    let hitX = endX;
+    let hitY = endY;
+    if (bestNpc) {
+      hitX = bestNpc.x;
+      hitY = bestNpc.y;
+    } else if (bankHit) {
+      hitX = player.x + aim.x * bestDist;
+      hitY = player.y + aim.y * bestDist;
+    }
 
     beam
       .moveTo(player.x, player.y)
@@ -157,7 +203,11 @@ export function tryShoot(stats, player, npcSystem, effectsLayer, onKill) {
     }
   }
 
-  return { gun, hit: Boolean(bestNpc) };
+  return {
+    gun,
+    hit: Boolean(bestNpc || bankHit),
+    bankHit
+  };
 }
 
 export function updateCombat(stats, deltaSeconds) {

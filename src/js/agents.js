@@ -5,6 +5,7 @@ import {
   AGENT_SPEECH_RANGE,
   AGENT_THINK_MAX_SEC,
   AGENT_THINK_MIN_SEC,
+  CELL_SIZE,
   DEFAULT_AGENT_COUNT,
   JOBS,
   ROAD_SIZE,
@@ -183,12 +184,49 @@ export function createAgentSystem({
     };
   }
 
-  function createOne(index) {
+  /**
+   * Spread spawns across the whole map (roads / intersections), not one corner.
+   */
+  function pickSpawnPoint(index, total) {
+    const cols = Math.max(1, Math.floor(WORLD_WIDTH / CELL_SIZE));
+    const rows = Math.max(1, Math.floor(WORLD_HEIGHT / CELL_SIZE));
+
+    // Prefer a unique grid cell per agent, then jitter on the road.
+    const cellIndex = index % (cols * rows);
+    const col = cellIndex % cols;
+    const row = Math.floor(cellIndex / cols);
+
+    // Alternate horizontal vs vertical road through that cell.
+    const onVertical = (index + row) % 2 === 0;
+    let x;
+    let y;
+
+    if (onVertical) {
+      x = col * CELL_SIZE + ROAD_SIZE * (0.25 + Math.random() * 0.5);
+      y = row * CELL_SIZE + random(40, CELL_SIZE - 40);
+    } else {
+      x = col * CELL_SIZE + random(40, CELL_SIZE - 40);
+      y = row * CELL_SIZE + ROAD_SIZE * (0.25 + Math.random() * 0.5);
+    }
+
+    // Extra scatter so agents with same cell (if many) don't stack.
+    const sector = total > 0 ? index / total : 0;
+    x += Math.cos(sector * Math.PI * 2) * random(0, 60);
+    y += Math.sin(sector * Math.PI * 2) * random(0, 60);
+
+    return {
+      x: clamp(x, AGENT_SIZE + 20, WORLD_WIDTH - AGENT_SIZE - 20),
+      y: clamp(y, AGENT_SIZE + 20, WORLD_HEIGHT - AGENT_SIZE - 20)
+    };
+  }
+
+  function createOne(index, total) {
     const name = AGENT_NAMES[index % AGENT_NAMES.length];
     const color = AGENT_COLORS[index % AGENT_COLORS.length];
     const visual = createAgentVisual(color, name);
-    visual.x = ROAD_SIZE / 2 + random(80, 400);
-    visual.y = ROAD_SIZE / 2 + random(80, 400);
+    const spawn = pickSpawnPoint(index, total);
+    visual.x = spawn.x;
+    visual.y = spawn.y;
 
     const stats = createPlayerStats();
     stats.money = Math.floor(random(5, 25));
@@ -240,7 +278,7 @@ export function createAgentSystem({
   }
 
   for (let i = 0; i < count; i++) {
-    createOne(i);
+    createOne(i, count);
   }
 
   function worldContextFor(agent) {

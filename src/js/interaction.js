@@ -104,6 +104,19 @@ function buildPrompt(stats, poi) {
     lines.push("Q cycle weapons · F/Space shoot");
   }
 
+  if (poi.type === "bank") {
+    if (poi.looted) {
+      lines.push("VAULT EMPTY — already looted");
+    } else {
+      lines.push(
+        `SHOOT THE VAULT · loot $${poi.lootAmount || 10000}`
+      );
+      lines.push(
+        `Vault armor: ${Math.ceil(poi.vaultHp ?? 120)} HP · security on site!`
+      );
+    }
+  }
+
   if (job) {
     const employedHere =
       stats.job &&

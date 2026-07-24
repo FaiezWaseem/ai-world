@@ -468,6 +468,7 @@ export function createPoliceSystem({
     officers,
     reportMurder,
     reportCrime,
+    reportCrimeAt,
     tryBribe,
     tryBribeFor,
     releaseSubject: (stats, body, reason) => {

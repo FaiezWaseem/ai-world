@@ -1,4 +1,5 @@
 import { createAgentSystem, fetchAgentCount } from "./agents.js";
+import { createBankSystem } from "./bank.js";
 import { COLORS, GUNS, WORLD_HEIGHT, WORLD_WIDTH } from "./config.js";
 import { updateCamera } from "./camera.js";
 import { generateCity } from "./city.js";
@@ -64,6 +65,7 @@ import { createTrafficSystem } from "./traffic.js";
   const carLayer = new PIXI.Container();
   const npcLayer = new PIXI.Container();
   const agentLayer = new PIXI.Container();
+  const securityLayer = new PIXI.Container();
   const policeLayer = new PIXI.Container();
   const effectsLayer = new PIXI.Container();
   const playerLayer = new PIXI.Container();
@@ -77,6 +79,7 @@ import { createTrafficSystem } from "./traffic.js";
   world.addChild(carLayer);
   world.addChild(npcLayer);
   world.addChild(agentLayer);
+  world.addChild(securityLayer);
   world.addChild(policeLayer);
   world.addChild(effectsLayer);
   world.addChild(playerLayer);
@@ -130,6 +133,14 @@ import { createTrafficSystem } from "./traffic.js";
     getPlayer: () => player,
     getStats: () => stats,
     getExtraWanted: () => agentsRef.system?.getWantedSubjects?.() || []
+  });
+
+  const bank = createBankSystem({
+    buildingColliders,
+    securityLayer,
+    getPlayer: () => player,
+    getPlayerStats: () => stats,
+    police
   });
 
   const agentCount = await fetchAgentCount();
@@ -239,6 +250,7 @@ import { createTrafficSystem } from "./traffic.js";
     );
     npcs.updateNPCs(deltaSeconds);
     agents.updateAgents(deltaSeconds);
+    bank.update(deltaSeconds);
     police.updatePolice(deltaSeconds);
     updateCamera(app, world, player, deltaSeconds);
 
@@ -274,9 +286,26 @@ import { createTrafficSystem } from "./traffic.js";
       !stats.inJail &&
       (input.consumePress("KeyF") || input.consumePress("Space"))
     ) {
-      tryShoot(stats, player, npcs, effectsLayer, () => {
-        police.reportMurder();
-      });
+      tryShoot(
+        stats,
+        player,
+        npcs,
+        effectsLayer,
+        () => {
+          police.reportMurder();
+        },
+        bank,
+        (crimeX, crimeY) => {
+          police.reportCrimeAt(
+            crimeX,
+            crimeY,
+            stats,
+            player,
+            "player",
+            "You"
+          );
+        }
+      );
     }
 
     if (stats.alive && !stats.inJail) {

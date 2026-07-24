@@ -139,6 +139,16 @@ export const SPECIAL_BUILDINGS = {
     minimap: 0x94a3b8,
     count: 1
   },
+  bank: {
+    label: "BANK",
+    color: 0xfef08a,
+    roof: 0xa16207,
+    accent: 0xfacc15,
+    window: 0xfef9c3,
+    minimap: 0xeab308,
+    count: 1,
+    forSale: false
+  },
   // Buyable real estate
   house: {
     label: "HOUSE",
@@ -196,6 +206,16 @@ export const POLICE_JOIN_RANGE = 220;
 export const JAIL_WAIT_SEC = 30;
 export const JAIL_FINE = 50;
 export const JAIL_BRIBE = 250;
+
+/** Single bank vault — shoot to loot. */
+export const BANK_LOOT = 10000;
+export const BANK_VAULT_HP = 120;
+export const BANK_SECURITY_COUNT = 5;
+export const BANK_SECURITY_PATROL = 70;
+export const BANK_SECURITY_CHASE = 250;
+export const BANK_SECURITY_RANGE = 42;
+/** Guards stay near the bank within this radius while idle. */
+export const BANK_SECURITY_PATROL_RADIUS = 220;
 
 /**
  * Guns for sale at GUN SHOP (buy with 1–5 while nearby).
