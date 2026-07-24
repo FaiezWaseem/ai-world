@@ -58,8 +58,8 @@ function distPointToSegment(px, py, x1, y1, x2, y2) {
  * Fire equipped gun toward facing direction.
  * Returns shot visual data or null.
  */
-export function tryShoot(stats, player, npcSystem, effectsLayer) {
-  if (!stats.alive) {
+export function tryShoot(stats, player, npcSystem, effectsLayer, onKill) {
+  if (!stats.alive || stats.inJail) {
     return null;
   }
 
@@ -145,6 +145,9 @@ export function tryShoot(stats, player, npcSystem, effectsLayer) {
         `Downed NPC · looted $${result.cash}  (cash $${stats.money})`,
         2.2
       );
+      if (typeof onKill === "function") {
+        onKill(result);
+      }
     } else {
       setPlayerMessage(
         stats,

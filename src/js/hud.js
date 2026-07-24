@@ -5,6 +5,9 @@ import {
   GRID_COLS,
   GRID_ROWS,
   HUNGER_INTERVAL_SEC,
+  JAIL_BRIBE,
+  JAIL_FINE,
+  JAIL_WAIT_SEC,
   ROAD_SIZE,
   TAX_INTERVAL_SEC,
   TAX_RATE,
@@ -15,6 +18,18 @@ import { isHighwayCol, isHighwayRow } from "./roads.js";
 const MINIMAP_SIZE = 190;
 const BAR_WIDTH = 220;
 const BAR_HEIGHT = 16;
+const SHADOW = { color: 0x000000, alpha: 0.8, blur: 2, distance: 1 };
+
+function textStyle(size, fill, extra = {}) {
+  return {
+    fontFamily: "Arial",
+    fontSize: size,
+    fontWeight: "bold",
+    fill,
+    dropShadow: SHADOW,
+    ...extra
+  };
+}
 
 function makeBar(label, color, y) {
   const root = new PIXI.Container();
@@ -23,18 +38,7 @@ function makeBar(label, color, y) {
 
   const title = new PIXI.Text({
     text: label,
-    style: {
-      fontFamily: "Arial",
-      fontSize: 12,
-      fontWeight: "bold",
-      fill: 0xffffff,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.7,
-        blur: 2,
-        distance: 1
-      }
-    }
+    style: textStyle(12, 0xffffff)
   });
 
   const bg = new PIXI.Graphics();
@@ -47,21 +51,12 @@ function makeBar(label, color, y) {
 
   const value = new PIXI.Text({
     text: "100%",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 11,
-      fontWeight: "bold",
-      fill: 0xffffff
-    }
+    style: textStyle(11, 0xffffff)
   });
   value.x = BAR_WIDTH + 8;
   value.y = 16;
 
-  root.addChild(title);
-  root.addChild(bg);
-  root.addChild(fill);
-  root.addChild(value);
-
+  root.addChild(title, bg, fill, value);
   return { root, fill, value, color };
 }
 
@@ -83,25 +78,16 @@ export function createHUD({
 }) {
   const instructions = new PIXI.Text({
     text:
-      "OPEN WORLD CITY\n" +
-      "Move: WASD / Arrows · Sprint: Shift\n" +
-      "E: Job · J: Eat · 1–5: Buy gun at shop\n" +
-      "Q: Cycle gun · F/Space: Shoot · K: Save · L: Load\n" +
-      "Auto-save every 5s · Hunger −5%/60s · Tax/3min\n" +
-      "Gun shops · NPCs drop $0–100",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 13,
-      fontWeight: "bold",
-      fill: 0xffffff,
-      lineHeight: 18,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.8,
-        blur: 3,
-        distance: 2
-      }
-    }
+      "WASD move · E job · J eat · 1–5 buy gun · F shoot\n" +
+      "Q gun · B bribe jail ($" +
+      JAIL_BRIBE +
+      ") · K/L save/load\n" +
+      "Murder → WANTED → jail " +
+      JAIL_WAIT_SEC +
+      "s + $" +
+      JAIL_FINE +
+      " · Hunger/Tax tick",
+    style: textStyle(13, 0xffffff, { lineHeight: 17 })
   });
 
   instructions.x = 20;
@@ -116,156 +102,81 @@ export function createHUD({
 
   const moneyText = new PIXI.Text({
     text: "$0",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 18,
-      fontWeight: "bold",
-      fill: COLORS.money,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.8,
-        blur: 2,
-        distance: 1
-      }
-    }
+    style: textStyle(18, COLORS.money)
   });
-  hud.addChild(moneyText);
-
   const taxText = new PIXI.Text({
     text: "",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 12,
-      fontWeight: "bold",
-      fill: 0xfca5a5,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.75,
-        blur: 2,
-        distance: 1
-      }
-    }
+    style: textStyle(12, 0xfca5a5)
   });
-  hud.addChild(taxText);
-
   const weaponText = new PIXI.Text({
     text: "Weapon: None",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 13,
-      fontWeight: "bold",
-      fill: 0xfde68a,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.75,
-        blur: 2,
-        distance: 1
-      }
-    }
+    style: textStyle(13, 0xfde68a)
   });
-  hud.addChild(weaponText);
-
+  const wantedText = new PIXI.Text({
+    text: "",
+    style: textStyle(16, 0xef4444)
+  });
+  wantedText.anchor.set(0.5, 0);
   const jobText = new PIXI.Text({
     text: "Job: Unemployed",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 13,
-      fontWeight: "bold",
-      fill: 0xe2e8f0,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.75,
-        blur: 2,
-        distance: 1
-      }
-    }
+    style: textStyle(13, 0xe2e8f0)
   });
-  hud.addChild(jobText);
-
   const hungerTimerText = new PIXI.Text({
     text: "",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 11,
-      fill: 0xcbd5e1
-    }
+    style: textStyle(11, 0xcbd5e1, { fontWeight: "normal" })
   });
-  hud.addChild(hungerTimerText);
-
   const promptText = new PIXI.Text({
     text: "",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 14,
-      fontWeight: "bold",
-      fill: 0xfef08a,
-      lineHeight: 18,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.9,
-        blur: 3,
-        distance: 1
-      }
-    }
+    style: textStyle(14, 0xfef08a, { lineHeight: 18 })
   });
   promptText.anchor.set(0.5, 1);
-  hud.addChild(promptText);
-
   const messageText = new PIXI.Text({
     text: "",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 15,
-      fontWeight: "bold",
-      fill: 0xffffff,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.9,
-        blur: 3,
-        distance: 1
-      }
-    }
+    style: textStyle(15, 0xffffff)
   });
   messageText.anchor.set(0.5, 0);
-  hud.addChild(messageText);
 
-  // Death overlay
+  hud.addChild(
+    moneyText,
+    taxText,
+    weaponText,
+    wantedText,
+    jobText,
+    hungerTimerText,
+    promptText,
+    messageText
+  );
+
+  const jailOverlay = new PIXI.Container();
+  jailOverlay.visible = false;
+  const jailBg = new PIXI.Graphics();
+  const jailTitle = new PIXI.Text({
+    text: "IN JAIL",
+    style: textStyle(42, 0x94a3b8)
+  });
+  jailTitle.anchor.set(0.5);
+  const jailHint = new PIXI.Text({
+    text: "",
+    style: textStyle(18, 0xffffff, { align: "center" })
+  });
+  jailHint.anchor.set(0.5);
+  jailOverlay.addChild(jailBg, jailTitle, jailHint);
+  hud.addChild(jailOverlay);
+
   const deathOverlay = new PIXI.Container();
   deathOverlay.visible = false;
-
   const deathBg = new PIXI.Graphics();
-  deathOverlay.addChild(deathBg);
-
   const deathTitle = new PIXI.Text({
     text: "YOU STARVED",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 48,
-      fontWeight: "bold",
-      fill: 0xef4444,
-      dropShadow: {
-        color: 0x000000,
-        alpha: 0.9,
-        blur: 4,
-        distance: 2
-      }
-    }
+    style: textStyle(48, 0xef4444)
   });
   deathTitle.anchor.set(0.5);
-  deathOverlay.addChild(deathTitle);
-
   const deathHint = new PIXI.Text({
     text: "Press R to restart",
-    style: {
-      fontFamily: "Arial",
-      fontSize: 20,
-      fontWeight: "bold",
-      fill: 0xffffff
-    }
+    style: textStyle(20, 0xffffff)
   });
   deathHint.anchor.set(0.5);
-  deathOverlay.addChild(deathHint);
-
+  deathOverlay.addChild(deathBg, deathTitle, deathHint);
   hud.addChild(deathOverlay);
 
   // Minimap
@@ -373,6 +284,16 @@ export function createHUD({
     deathTitle.y = h / 2 - 20;
     deathHint.x = w / 2;
     deathHint.y = h / 2 + 40;
+
+    wantedText.x = w / 2;
+    wantedText.y = 16;
+
+    jailBg.clear();
+    jailBg.rect(0, 0, w, h).fill({ color: 0x0f172a, alpha: 0.55 });
+    jailTitle.x = w / 2;
+    jailTitle.y = h / 2 - 36;
+    jailHint.x = w / 2;
+    jailHint.y = h / 2 + 24;
   }
 
   positionHUD();
@@ -397,6 +318,21 @@ export function createHUD({
       ? `Weapon: ${gun.name}  (dmg ${gun.damage})`
       : "Weapon: None — buy at GUN SHOP";
 
+    if (stats.inJail) {
+      wantedText.text = "";
+    } else if (stats.wanted) {
+      wantedText.text = "★ WANTED ★  Police chasing!";
+    } else {
+      wantedText.text = "";
+    }
+
+    jailOverlay.visible = Boolean(stats.inJail && stats.alive);
+    if (stats.inJail) {
+      jailHint.text =
+        `Wait ${Math.ceil(stats.jailTimer)}s then pay $${JAIL_FINE}\n` +
+        `or press B to bribe $${JAIL_BRIBE}  (cash $${stats.money})`;
+    }
+
     const taxSecsLeft = Math.max(0, TAX_INTERVAL_SEC - stats.taxTimer);
     const nextTax = Math.floor(stats.totalIncome * TAX_RATE);
     taxText.text = stats.alive
@@ -411,7 +347,7 @@ export function createHUD({
       ? `Next hunger drop in ${Math.ceil(secsLeft)}s`
       : "";
 
-    promptText.text = prompt;
+    promptText.text = stats.inJail ? "" : prompt;
     messageText.text =
       stats.messageTimer > 0 ? stats.message : "";
 

@@ -39,7 +39,10 @@ function serialize(player, stats) {
       taxTimer: stats.taxTimer,
       workCooldown: stats.workCooldown,
       ownedGuns: [...(stats.ownedGuns || [])],
-      equippedGunId: stats.equippedGunId
+      equippedGunId: stats.equippedGunId,
+      wanted: Boolean(stats.wanted),
+      inJail: Boolean(stats.inJail),
+      jailTimer: stats.jailTimer || 0
     }
   };
 }
@@ -104,6 +107,9 @@ export function loadPlayerState(player, stats) {
     stats.taxTimer = Math.max(0, s.taxTimer ?? 0);
     stats.workCooldown = Math.max(0, s.workCooldown ?? 0);
     stats.fireCooldown = 0;
+    stats.wanted = Boolean(s.wanted);
+    stats.inJail = Boolean(s.inJail);
+    stats.jailTimer = Math.max(0, s.jailTimer ?? 0);
 
     const validGunIds = new Set(GUNS.map((g) => g.id));
     stats.ownedGuns = Array.isArray(s.ownedGuns)

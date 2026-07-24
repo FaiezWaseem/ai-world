@@ -115,8 +115,26 @@ export const SPECIAL_BUILDINGS = {
     window: 0xfef3c7,
     minimap: 0xa8a29e,
     count: 2
+  },
+  jail: {
+    label: "JAIL",
+    color: 0x64748b,
+    roof: 0x0f172a,
+    accent: 0xef4444,
+    window: 0xcbd5e1,
+    minimap: 0x94a3b8,
+    count: 1
   }
 };
+
+/** Police / jail rules (murder → arrest). */
+export const POLICE_COUNT = 10;
+export const POLICE_PATROL_SPEED = 95;
+export const POLICE_CHASE_SPEED = 240;
+export const POLICE_ARREST_RANGE = 32;
+export const JAIL_WAIT_SEC = 30;
+export const JAIL_FINE = 50;
+export const JAIL_BRIBE = 250;
 
 /**
  * Guns for sale at GUN SHOP (buy with 1–5 while nearby).

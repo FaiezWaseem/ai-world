@@ -26,6 +26,7 @@ import {
   updatePlayer,
   updatePlayerStats
 } from "./player.js";
+import { createPoliceSystem } from "./police.js";
 import { createRoads } from "./roads.js";
 import {
   clearPlayerState,
@@ -59,6 +60,7 @@ import { createTrafficSystem } from "./traffic.js";
   const trafficLayer = new PIXI.Container();
   const carLayer = new PIXI.Container();
   const npcLayer = new PIXI.Container();
+  const policeLayer = new PIXI.Container();
   const effectsLayer = new PIXI.Container();
   const playerLayer = new PIXI.Container();
 
@@ -70,6 +72,7 @@ import { createTrafficSystem } from "./traffic.js";
   world.addChild(trafficLayer);
   world.addChild(carLayer);
   world.addChild(npcLayer);
+  world.addChild(policeLayer);
   world.addChild(effectsLayer);
   world.addChild(playerLayer);
 
@@ -115,6 +118,13 @@ import { createTrafficSystem } from "./traffic.js";
   });
   npcsRef.list = npcs.npcs;
 
+  const police = createPoliceSystem({
+    policeLayer,
+    buildingColliders,
+    getPlayer: () => player,
+    getStats: () => stats
+  });
+
   const ui = createHUD({
     app,
     hud,
@@ -123,6 +133,15 @@ import { createTrafficSystem } from "./traffic.js";
 
   const autoSave = setupAutoSave(player, stats, 5);
   const didLoad = loadPlayerState(player, stats);
+
+  // Restore jail / wanted after load.
+  if (didLoad && stats.inJail) {
+    const spot = police.getJailSpot();
+    player.x = spot.x;
+    player.y = spot.y;
+  } else if (didLoad && stats.wanted) {
+    police.reportMurder();
+  }
 
   if (!didLoad) {
     setPlayerMessage(
@@ -184,31 +203,39 @@ import { createTrafficSystem } from "./traffic.js";
       deltaSeconds
     );
     npcs.updateNPCs(deltaSeconds);
+    police.updatePolice(deltaSeconds);
     updateCamera(app, world, player, deltaSeconds);
 
     const nearby = findNearbyPoi(player, buildingColliders);
     const prompt = getInteractionPrompt(stats, nearby);
 
-    if (stats.alive && input.consumePress("KeyE")) {
+    if (stats.alive && stats.inJail && input.consumePress("KeyB")) {
+      police.tryBribe();
+    }
+
+    if (stats.alive && !stats.inJail && input.consumePress("KeyE")) {
       tryJobInteract(stats, nearby);
     }
 
-    if (stats.alive && input.consumePress("KeyJ")) {
+    if (stats.alive && !stats.inJail && input.consumePress("KeyJ")) {
       tryEatInteract(stats, nearby);
     }
 
-    if (stats.alive && input.consumePress("KeyQ")) {
+    if (stats.alive && !stats.inJail && input.consumePress("KeyQ")) {
       cycleGun(stats);
     }
 
     if (
       stats.alive &&
+      !stats.inJail &&
       (input.consumePress("KeyF") || input.consumePress("Space"))
     ) {
-      tryShoot(stats, player, npcs, effectsLayer);
+      tryShoot(stats, player, npcs, effectsLayer, () => {
+        police.reportMurder();
+      });
     }
 
-    if (stats.alive) {
+    if (stats.alive && !stats.inJail) {
       for (let i = 0; i < buyGunKeys.length; i++) {
         if (input.consumePress(buyGunKeys[i])) {
           tryBuyGun(stats, nearby, i % GUNS.length);

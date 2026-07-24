@@ -248,6 +248,26 @@ function decorateGunShop(graphics, x, y, width, height, theme) {
     .fill({ color: 0x44403c });
 }
 
+function decorateJail(graphics, x, y, width, height, theme) {
+  // Cell bars on the front.
+  for (let i = 0; i < 8; i++) {
+    const bx = x + 20 + i * ((width - 40) / 7);
+    graphics
+      .rect(bx, y + 40, 5, height - 70)
+      .fill({ color: 0xcbd5e1 });
+  }
+
+  // Watch tower block.
+  graphics
+    .roundRect(x + width - 48, y + 20, 32, 50, 4)
+    .fill({ color: theme.roof })
+    .stroke({ color: theme.accent, width: 2 });
+
+  graphics
+    .roundRect(x + width / 2 - 16, y + height - 30, 32, 22, 3)
+    .fill({ color: 0x1e293b });
+}
+
 export function createBuilding(
   buildingLayer,
   labelLayer,
@@ -339,6 +359,8 @@ export function createBuilding(
     decorateOffice(building, x, y, width, height, theme);
   } else if (type === "gunshop") {
     decorateGunShop(building, x, y, width, height, theme);
+  } else if (type === "jail") {
+    decorateJail(building, x, y, width, height, theme);
   }
 
   if (theme) {

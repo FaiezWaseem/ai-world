@@ -71,6 +71,9 @@ export function createPlayerStats() {
     ownedGuns: [],
     equippedGunId: null,
     fireCooldown: 0,
+    wanted: false,
+    inJail: false,
+    jailTimer: 0,
     message: "",
     messageTimer: 0
   };
@@ -90,6 +93,9 @@ export function resetPlayerStats(stats) {
   stats.ownedGuns = [];
   stats.equippedGunId = null;
   stats.fireCooldown = 0;
+  stats.wanted = false;
+  stats.inJail = false;
+  stats.jailTimer = 0;
   stats.message = "Find a job, earn money, then eat!";
   stats.messageTimer = 4;
 }
@@ -217,7 +223,7 @@ export function createPlayer(playerLayer) {
 }
 
 export function updatePlayer(player, stats, keys, moveEntity, deltaSeconds) {
-  if (!stats.alive) {
+  if (!stats.alive || stats.inJail) {
     return;
   }
 
