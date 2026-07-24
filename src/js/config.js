@@ -20,6 +20,8 @@ export const AGENT_SPEED = 240;
 export const AGENT_THINK_MIN_SEC = 6;
 export const AGENT_THINK_MAX_SEC = 12;
 export const AGENT_SPEECH_RANGE = 160;
+/** How close agents must be to talk to the human player. */
+export const AGENT_PLAYER_TALK_RANGE = 140;
 /** How close agents must be to borrow cash or guns. */
 export const AGENT_TRADE_RANGE = 90;
 export const AGENT_BORROW_DEFAULT = 20;
@@ -136,14 +138,61 @@ export const SPECIAL_BUILDINGS = {
     window: 0xcbd5e1,
     minimap: 0x94a3b8,
     count: 1
+  },
+  // Buyable real estate
+  house: {
+    label: "HOUSE",
+    color: 0xfcd34d,
+    roof: 0xb45309,
+    accent: 0xfef3c7,
+    window: 0xffedd5,
+    minimap: 0xfbbf24,
+    count: 5,
+    forSale: true,
+    basePrice: 180,
+    rentRate: 0.025
+  },
+  apartment: {
+    label: "APARTMENT",
+    color: 0xa5b4fc,
+    roof: 0x4338ca,
+    accent: 0xe0e7ff,
+    window: 0xc7d2fe,
+    minimap: 0x818cf8,
+    count: 4,
+    forSale: true,
+    basePrice: 320,
+    rentRate: 0.03
+  },
+  shop: {
+    label: "SHOP",
+    color: 0xf9a8d4,
+    roof: 0x9d174d,
+    accent: 0xfce7f3,
+    window: 0xfbcfe8,
+    minimap: 0xec4899,
+    count: 3,
+    forSale: true,
+    basePrice: 450,
+    rentRate: 0.035
   }
 };
+
+/** How often owned properties pay rent to the owner. */
+export const PROPERTY_RENT_INTERVAL_SEC = 45;
+
+/** Chance a generic (non-POI) building is listed for sale. */
+export const GENERIC_FOR_SALE_CHANCE = 0.22;
 
 /** Police / jail rules (murder → arrest). */
 export const POLICE_COUNT = 10;
 export const POLICE_PATROL_SPEED = 95;
 export const POLICE_CHASE_SPEED = 240;
 export const POLICE_ARREST_RANGE = 32;
+/** Only cops this close can witness a crime (no city-wide omniscience). */
+export const POLICE_WITNESS_RANGE = 380;
+/** If already wanted, idle cops this close can join the chase. */
+export const POLICE_JOIN_RANGE = 220;
 export const JAIL_WAIT_SEC = 30;
 export const JAIL_FINE = 50;
 export const JAIL_BRIBE = 250;

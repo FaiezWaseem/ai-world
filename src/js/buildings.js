@@ -3,6 +3,11 @@ import {
   SPECIAL_BUILDINGS
 } from "./config.js";
 import { random, randomItem } from "./helpers.js";
+import {
+  computePropertyPrice,
+  computeRentIncome,
+  shouldListGenericForSale
+} from "./properties.js";
 
 function addBuildingLabel(labelLayer, x, y, width, height, text) {
   const fontSize = Math.max(
@@ -268,6 +273,67 @@ function decorateJail(graphics, x, y, width, height, theme) {
     .fill({ color: 0x1e293b });
 }
 
+function decorateHouse(graphics, x, y, width, height, theme) {
+  // Roof triangle feel via dark band
+  graphics
+    .poly([
+      x + 8, y + 28,
+      x + width / 2, y + 6,
+      x + width - 8, y + 28
+    ])
+    .fill({ color: theme.roof });
+
+  graphics
+    .roundRect(x + width / 2 - 10, y + height - 28, 20, 22, 2)
+    .fill({ color: 0x78350f });
+
+  // Windows
+  graphics
+    .rect(x + 18, y + height / 2 - 6, 16, 16)
+    .fill({ color: theme.window })
+    .stroke({ color: theme.roof, width: 2 });
+  graphics
+    .rect(x + width - 34, y + height / 2 - 6, 16, 16)
+    .fill({ color: theme.window })
+    .stroke({ color: theme.roof, width: 2 });
+}
+
+function decorateApartment(graphics, x, y, width, height, theme) {
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) {
+      const wx = x + 18 + col * ((width - 40) / 2.5);
+      const wy = y + 36 + row * 28;
+      if (wy + 14 > y + height - 16) {
+        continue;
+      }
+      graphics
+        .rect(wx, wy, 14, 14)
+        .fill({ color: theme.window, alpha: 0.95 })
+        .stroke({ color: theme.roof, width: 1 });
+    }
+  }
+  graphics
+    .roundRect(x + width / 2 - 12, y + height - 26, 24, 20, 2)
+    .fill({ color: 0x312e81 });
+}
+
+function decorateShop(graphics, x, y, width, height, theme) {
+  // Storefront awning
+  for (let i = 0; i < 6; i++) {
+    const sx = x + 12 + i * ((width - 24) / 6);
+    graphics
+      .rect(sx, y + height / 2 - 10, (width - 24) / 6 - 2, 14)
+      .fill({ color: i % 2 === 0 ? theme.roof : theme.accent });
+  }
+  graphics
+    .roundRect(x + 16, y + height / 2 + 8, width - 32, 28, 4)
+    .fill({ color: theme.window, alpha: 0.9 })
+    .stroke({ color: theme.roof, width: 2 });
+  graphics
+    .roundRect(x + width / 2 - 12, y + height - 26, 24, 20, 2)
+    .fill({ color: 0x831843 });
+}
+
 export function createBuilding(
   buildingLayer,
   labelLayer,
@@ -361,7 +427,24 @@ export function createBuilding(
     decorateGunShop(building, x, y, width, height, theme);
   } else if (type === "jail") {
     decorateJail(building, x, y, width, height, theme);
+  } else if (type === "house") {
+    decorateHouse(building, x, y, width, height, theme);
+  } else if (type === "apartment") {
+    decorateApartment(building, x, y, width, height, theme);
+  } else if (type === "shop") {
+    decorateShop(building, x, y, width, height, theme);
   }
+
+  const forSale =
+    Boolean(theme?.forSale) || (!type && shouldListGenericForSale());
+  // Jail / active civic buildings are never sold.
+  const canSell =
+    forSale && type !== "jail" && type !== "school" && type !== "gunshop";
+
+  const price = canSell
+    ? computePropertyPrice(width, height, type)
+    : 0;
+  const rentIncome = canSell ? computeRentIncome(price, type) : 0;
 
   if (theme) {
     const signWidth = Math.min(width - 24, theme.label.length * 11 + 20);
@@ -374,10 +457,27 @@ export function createBuilding(
       .stroke({ color: theme.accent, width: 2 });
   }
 
+  // For-sale ribbon
+  if (canSell) {
+    building
+      .roundRect(x + 10, y + height - 36, Math.min(width - 20, 100), 18, 4)
+      .fill({ color: 0x166534, alpha: 0.92 })
+      .stroke({ color: 0x4ade80, width: 1 });
+  }
+
   buildingLayer.addChild(building);
 
-  if (theme) {
-    addBuildingLabel(labelLayer, x, y, width, height, theme.label);
+  let labelText = theme ? theme.label : null;
+  if (canSell && !theme) {
+    labelText = "FOR SALE";
+  } else if (canSell && theme) {
+    labelText = `${theme.label}\n$${price}`;
+  }
+
+  if (labelText) {
+    // Single-line label (price shown via green ribbon for listings).
+    const single = String(labelText).split("\n")[0];
+    addBuildingLabel(labelLayer, x, y, width, height, single);
   }
 
   buildingColliders.push({
@@ -386,7 +486,13 @@ export function createBuilding(
     width,
     height,
     type: type || null,
-    minimapColor: theme ? theme.minimap : 0x64748b,
-    id: `${type || "generic"}-${buildingColliders.length}`
+    label: labelText || "BUILDING",
+    minimapColor: theme ? theme.minimap : canSell ? 0x4ade80 : 0x64748b,
+    id: `${type || "generic"}-${buildingColliders.length}`,
+    forSale: canSell,
+    price,
+    rentIncome,
+    owner: null,
+    ownerName: null
   });
 }

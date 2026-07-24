@@ -1,4 +1,5 @@
 import {
+  AGENT_PLAYER_TALK_RANGE,
   AGENT_SIZE,
   AGENT_SPEED,
   AGENT_SPEECH_RANGE,
@@ -16,6 +17,7 @@ import {
   doBorrowGun,
   doBorrowMoney,
   doBuyGun,
+  doBuyProperty,
   doEat,
   doShoot,
   doTalk,
@@ -23,13 +25,18 @@ import {
   edgeDistToBuilding,
   say
 } from "./agentActions.js";
+import { isBuyable, tickPropertyRent } from "./properties.js";
 import {
   buildAgentPrompt,
   fallbackDecision,
   requestAgentDecision
 } from "./agentBrain.js";
 import { clamp, random } from "./helpers.js";
-import { createPlayerStats, tickSurvival } from "./player.js";
+import {
+  createPlayerStats,
+  setPlayerMessage,
+  tickSurvival
+} from "./player.js";
 
 const AGENT_NAMES = [
   "Ava", "Ben", "Cora", "Dex", "Elena", "Finn", "Gwen", "Hiro", "Ivy", "Jules"
@@ -130,16 +137,50 @@ export function createAgentSystem({
   npcSystem,
   effectsLayer,
   police,
+  getPlayer = () => null,
+  getPlayerStats = () => null,
   count = DEFAULT_AGENT_COUNT
 }) {
   const agents = [];
   const chatLog = [];
+  /** Recent lines the human said (agents can react). */
+  let lastPlayerLine = "";
+  let lastPlayerLineAt = 0;
 
   function pushChat(from, to, text) {
     chatLog.push({ t: performance.now(), from, to, text });
     if (chatLog.length > 40) {
       chatLog.shift();
     }
+  }
+
+  function notifyPlayer(text, duration = 3.5) {
+    const stats = getPlayerStats();
+    if (stats) {
+      setPlayerMessage(stats, text, duration);
+    }
+  }
+
+  function playerNearby(agent) {
+    const player = getPlayer();
+    const pStats = getPlayerStats();
+    if (!player || !pStats?.alive || pStats.inJail) {
+      return null;
+    }
+    const d = dist(agent.x, agent.y, player.x, player.y);
+    if (d > AGENT_PLAYER_TALK_RANGE * 1.5) {
+      return null;
+    }
+    return {
+      name: "You",
+      isPlayer: true,
+      money: pStats.money,
+      guns: [...(pStats.ownedGuns || [])],
+      hunger: pStats.hunger,
+      dist: d,
+      wanted: pStats.wanted,
+      lastSpeech: lastPlayerLine
+    };
   }
 
   function createOne(index) {
@@ -219,6 +260,7 @@ export function createAgentSystem({
       .filter((a) => a !== agent && a.stats.alive)
       .map((a) => ({
         name: a.name,
+        isPlayer: false,
         money: a.stats.money,
         guns: [...(a.stats.ownedGuns || [])],
         hunger: a.stats.hunger,
@@ -229,7 +271,22 @@ export function createAgentSystem({
       .sort((a, b) => a.dist - b.dist)
       .slice(0, 5);
 
-    return { nearbyPois, nearbyAgents };
+    const you = playerNearby(agent);
+    if (you) {
+      nearbyAgents.unshift(you);
+    }
+
+    const recentPlayerChat =
+      lastPlayerLine && performance.now() - lastPlayerLineAt < 20000
+        ? lastPlayerLine
+        : "";
+
+    return {
+      nearbyPois,
+      nearbyAgents,
+      playerNearby: you,
+      recentPlayerChat
+    };
   }
 
   function moveToward(agent, tx, ty, deltaSeconds) {
@@ -304,6 +361,36 @@ export function createAgentSystem({
       case "buy_gun":
         doBuyGun(agent, buildingColliders, decision.target || "pistol");
         break;
+      case "buy_property":
+      case "buy_house": {
+        // Path to nearest for-sale if not close.
+        let best = null;
+        let bestD = Infinity;
+        for (const b of buildingColliders) {
+          if (!isBuyable(b)) {
+            continue;
+          }
+          const d = dist(
+            agent.x,
+            agent.y,
+            b.x + b.width / 2,
+            b.y + b.height / 2
+          );
+          if (d < bestD) {
+            bestD = d;
+            best = b;
+          }
+        }
+        if (best && bestD > 60) {
+          agent.targetX = best.x + best.width / 2;
+          agent.targetY = best.y + best.height / 2;
+          agent.targetType = "property";
+          agent.lastResult = "going to buy property";
+        } else {
+          doBuyProperty(agent, buildingColliders);
+        }
+        break;
+      }
       case "equip_gun":
         if (decision.target && agent.stats.ownedGuns.includes(decision.target)) {
           agent.stats.equippedGunId = decision.target;
@@ -320,7 +407,11 @@ export function createAgentSystem({
         }
         break;
       case "talk":
-        doTalk(agent, decision, ctx, agents, pushChat);
+        doTalk(agent, decision, ctx, agents, pushChat, {
+          getPlayer,
+          getPlayerStats,
+          notifyPlayer
+        });
         break;
       case "borrow_money":
       case "borrow":
@@ -474,6 +565,13 @@ export function createAgentSystem({
           silent: true,
           name: agent.name
         });
+        tickPropertyRent(
+          agent.stats,
+          agent.id,
+          buildingColliders,
+          deltaSeconds,
+          { silent: true }
+        );
       }
 
       if (!agent.stats.alive) {
@@ -530,6 +628,8 @@ export function createAgentSystem({
             doApplyJob(agent, buildingColliders, destType);
           } else if (destType === "gunshop") {
             doBuyGun(agent, buildingColliders, "pistol");
+          } else if (destType === "property") {
+            doBuyProperty(agent, buildingColliders);
           }
           // Immediately pick next goal so they don't stand still.
           planLocally(agent);
@@ -546,9 +646,93 @@ export function createAgentSystem({
     }
   }
 
+  const PLAYER_LINES = [
+    "Hey, how's it going?",
+    "Any work around here?",
+    "Stay safe out there.",
+    "Got tips for making money?",
+    "Watch out for the cops.",
+    "Need a partner?",
+    "What's your story?",
+    "I'm the new person in town."
+  ];
+  let playerLineIndex = 0;
+
+  /**
+   * Human player talks to the nearest living agent (key T).
+   */
+  function playerTalkToNearest() {
+    const player = getPlayer();
+    const pStats = getPlayerStats();
+    if (!player || !pStats?.alive || pStats.inJail) {
+      return false;
+    }
+
+    let nearest = null;
+    let best = AGENT_PLAYER_TALK_RANGE;
+    for (const a of agents) {
+      if (!a.stats.alive || a.stats.inJail) {
+        continue;
+      }
+      const d = dist(player.x, player.y, a.x, a.y);
+      if (d < best) {
+        best = d;
+        nearest = a;
+      }
+    }
+
+    if (!nearest) {
+      setPlayerMessage(pStats, "No one nearby to talk to. Get closer to an agent.", 2);
+      return false;
+    }
+
+    const line = PLAYER_LINES[playerLineIndex % PLAYER_LINES.length];
+    playerLineIndex += 1;
+    lastPlayerLine = line;
+    lastPlayerLineAt = performance.now();
+
+    pushChat("You", nearest.name, line);
+    setPlayerMessage(pStats, `You → ${nearest.name}: "${line}"`, 3);
+
+    // Face each other a bit
+    nearest.rotation =
+      Math.atan2(player.y - nearest.y, player.x - nearest.x) + Math.PI / 2;
+
+    // Agent always replies to the player
+    const replies = [
+      `Hey! I'm ${nearest.name}. Good to meet you.`,
+      `Hi there. I'm at $${nearest.stats.money} right now.`,
+      "Jobs pay, but hunger never stops.",
+      "Careful — cops only chase if they see you.",
+      "I'm trying to buy property when I can.",
+      "Need food? Hit a market or restaurant.",
+      `Stay fed. Hunger is ${Math.round(nearest.stats.hunger)}% for me.`,
+      "We can borrow cash or guns if we're close.",
+      "Nice to have another human around.",
+      "Don't starve. Seriously."
+    ];
+    const reply = replies[Math.floor(Math.random() * replies.length)];
+
+    setTimeout(() => {
+      if (!nearest.stats.alive) {
+        return;
+      }
+      say(nearest, reply, 5);
+      pushChat(nearest.name, "You", reply);
+      setPlayerMessage(pStats, `${nearest.name}: "${reply}"`, 4);
+      nearest.lastResult = "talked to player";
+    }, 600 + Math.random() * 500);
+
+    // Nudge agent to stay social next plan
+    nearest.thinkTimer = Math.min(nearest.thinkTimer, 2);
+
+    return true;
+  }
+
   return {
     agents,
     updateAgents,
+    playerTalkToNearest,
     getWantedSubjects: () =>
       agents
         .filter((a) => a.stats.alive && a.stats.wanted && !a.stats.inJail)

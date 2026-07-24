@@ -20,7 +20,7 @@ export function buildAgentPrompt(agent, worldContext) {
   const others = worldContext.nearbyAgents
     .map(
       (a) =>
-        `${a.name} ($${a.money}, guns:[${(a.guns || []).join(",") || "none"}], hunger ${Math.round(a.hunger)}%) dist=${Math.round(a.dist)} said:"${a.lastSpeech || ""}"`
+        `${a.name}${a.isPlayer ? " [HUMAN PLAYER]" : ""} ($${a.money}, guns:[${(a.guns || []).join(",") || "none"}], hunger ${Math.round(a.hunger)}%) dist=${Math.round(a.dist)} said:"${a.lastSpeech || ""}"`
     )
     .join("; ");
 
@@ -29,11 +29,20 @@ export function buildAgentPrompt(agent, worldContext) {
     ? `${agent.stats.job.title} @ ${agent.stats.job.label}`
     : "unemployed";
 
+  const playerHint = worldContext.playerNearby
+    ? `The HUMAN PLAYER ("You") is nearby (dist ${Math.round(worldContext.playerNearby.dist)}). Prefer talking to them sometimes — set sayTo to "You".`
+    : "Human player is not nearby.";
+
+  const playerSaid = worldContext.recentPlayerChat
+    ? `Player recently said: "${worldContext.recentPlayerChat}" — you may reply.`
+    : "";
+
   return `You are ${agent.name}, an AI citizen in an open-world city simulation.
 Personality: ${agent.personality}
 
 Your goal: SURVIVE. Earn money, eat before hunger hits 0, pay taxes automatically.
-You may socialize, buy guns, BORROW money/guns from nearby agents, commit crimes, or help others.
+You may socialize with OTHER AGENTS and the HUMAN PLAYER, buy guns, borrow money/guns, commit crimes, or help others.
+IMPORTANT: When the human is nearby, greet or chat with them sometimes (action talk, sayTo "You").
 
 STATE:
 - money: $${agent.stats.money}
@@ -48,26 +57,29 @@ STATE:
 - position: (${Math.round(agent.x)}, ${Math.round(agent.y)})
 - last action result: ${agent.lastResult || "none"}
 
-NEARBY BUILDINGS (within walk): ${nearby || "none"}
-NEARBY AGENTS (trade if dist small): ${others || "none"}
+NEARBY BUILDINGS: ${nearby || "none"}
+NEARBY PEOPLE: ${others || "none"}
+${playerHint}
+${playerSaid}
 
 Valid actions (pick ONE primary action):
 - wander — stroll randomly
 - go_to — walk toward a place; target must be one of: ${Object.keys(SPECIAL_BUILDINGS).join(", ")}
-- apply_job — apply for job at nearby workplace (target: school|restaurant|grocery|gym|office|barber|gunshop)
+- apply_job — apply for job at nearby workplace
 - work — work a shift if employed and near workplace
 - eat — buy food if near restaurant or grocery
 - buy_gun — buy gun if at gunshop; target is gun id: ${GUNS.map((g) => g.id).join(", ")}
 - equip_gun — equip owned gun; target = gun id
-- borrow_money — ask nearby agent for cash; sayTo/target = their name; amount = dollars (optional)
-- borrow_gun — ask nearby agent for a weapon; sayTo = their name; item = gun id optional
-- shoot — shoot nearest NPC (makes you WANTED if kill)
+- buy_property — buy FOR SALE property
+- borrow_money — ask nearby agent for cash; sayTo = their name; amount optional
+- borrow_gun — ask nearby agent for a weapon; sayTo = their name
+- shoot — shoot nearest NPC (WANTED if seen)
 - bribe — if in jail and money >= 250
-- talk — speak to nearby agents (use say + optional sayTo name)
+- talk — speak; sayTo = agent name OR "You" for the human player
 - wait — stand still
 
 Reply with ONLY compact JSON (no markdown):
-{"thought":"short","say":"optional speech max 80 chars or null","sayTo":"agent name or null","action":"one of list","target":"optional string","amount":0,"item":null}`;
+{"thought":"short","say":"speech max 80 chars or null","sayTo":"You or agent name or null","action":"one of list","target":"optional","amount":0,"item":null}`;
 }
 
 /**
@@ -258,6 +270,17 @@ export function fallbackDecision(agent, worldContext) {
     };
   }
 
+  // Real estate if flush with cash
+  if (s.money > 200 && Math.random() < 0.3) {
+    return {
+      thought: "Invest in property",
+      say: "Looking at real estate.",
+      sayTo: null,
+      action: "buy_property",
+      target: null
+    };
+  }
+
   // Optional crime / social when stable
   if (s.money > 80 && !s.ownedGuns.length && Math.random() < 0.25) {
     return {
@@ -285,10 +308,22 @@ export function fallbackDecision(agent, worldContext) {
     };
   }
 
-  if (worldContext.nearbyAgents.length && Math.random() < 0.35) {
-    const other = worldContext.nearbyAgents[0];
+  // Prefer talking to the human when nearby
+  if (worldContext.playerNearby && Math.random() < 0.55) {
     return {
-      thought: "Socialize",
+      thought: "Chat with the human player",
+      say: pickPlayerChat(agent, worldContext),
+      sayTo: "You",
+      action: "talk",
+      target: "you"
+    };
+  }
+
+  const otherAgents = worldContext.nearbyAgents.filter((a) => !a.isPlayer);
+  if (otherAgents.length && Math.random() < 0.4) {
+    const other = otherAgents[0];
+    return {
+      thought: "Socialize with agent",
       say: pickChat(agent, other),
       sayTo: other.name,
       action: "talk",
@@ -305,13 +340,41 @@ export function fallbackDecision(agent, worldContext) {
   };
 }
 
+function pickPlayerChat(agent, worldContext) {
+  const recent = worldContext.recentPlayerChat;
+  if (recent) {
+    const replies = [
+      "Yeah, I hear you.",
+      "Makes sense.",
+      `I'm ${agent.name} — good talking.`,
+      "Thanks for saying hi!",
+      "Ha, true. This city is rough.",
+      "Stay fed out there, friend."
+    ];
+    return replies[Math.floor(Math.random() * replies.length)];
+  }
+
+  const lines = [
+    `Hey! I'm ${agent.name}. Welcome.`,
+    "You're the human, right? Cool.",
+    "Jobs pay — don't forget to eat.",
+    "Cops only chase if they see you.",
+    `I've got $${agent.stats.money}. Hustling.`,
+    "Press T near me anytime to chat.",
+    "Need a tip? Buy property for rent.",
+    "We can borrow cash if we're close."
+  ];
+  return lines[Math.floor(Math.random() * lines.length)];
+}
+
 function pickChat(agent, other) {
   const lines = [
     `Hey ${other.name}, how are you surviving?`,
     `I'm ${agent.name}. Jobs pay, hunger is real.`,
     "Taxes hurt. Need another shift.",
     "Stay fed out there.",
-    `Got $${agent.stats.money}. You?`
+    `Got $${agent.stats.money}. You?`,
+    "Did you meet the human yet?"
   ];
   return lines[Math.floor(Math.random() * lines.length)];
 }

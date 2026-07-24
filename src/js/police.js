@@ -6,7 +6,9 @@ import {
   POLICE_ARREST_RANGE,
   POLICE_CHASE_SPEED,
   POLICE_COUNT,
+  POLICE_JOIN_RANGE,
   POLICE_PATROL_SPEED,
+  POLICE_WITNESS_RANGE,
   ROAD_SIZE,
   WORLD_HEIGHT,
   WORLD_WIDTH
@@ -64,8 +66,12 @@ function createOfficerGraphics() {
   return body;
 }
 
+function dist(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
 /**
- * Police chase any wanted subjects (player + AI agents).
+ * Police only chase if they witnessed the crime (or later join nearby).
  * getExtraWanted: () => [{ body, stats, kind, name? }]
  */
 export function createPoliceSystem({
@@ -88,6 +94,7 @@ export function createPoliceSystem({
     cop.directionY = cop.directionX === 0 ? randomItem([-1, 1]) : 0;
     cop.changeTimer = random(1.5, 4);
     cop.alerted = false;
+    cop.chaseTarget = null; // { body, stats, kind, name }
     policeLayer.addChild(cop);
     officers.push(cop);
   }
@@ -96,58 +103,101 @@ export function createPoliceSystem({
     createOfficer();
   }
 
-  function alertAll() {
+  function clearChaseFor(stats) {
     for (const cop of officers) {
-      cop.alerted = true;
+      if (cop.chaseTarget?.stats === stats) {
+        cop.alerted = false;
+        cop.chaseTarget = null;
+      }
     }
   }
 
-  function listWanted() {
-    const list = [];
-    const player = getPlayer();
-    const pStats = getStats();
-    if (pStats.alive && pStats.wanted && !pStats.inJail) {
-      list.push({
-        body: player,
-        stats: pStats,
-        kind: "player",
-        name: "You"
-      });
+  function clearAllChases() {
+    for (const cop of officers) {
+      cop.alerted = false;
+      cop.chaseTarget = null;
     }
-    for (const extra of getExtraWanted()) {
-      if (
-        extra?.stats?.alive &&
-        extra.stats.wanted &&
-        !extra.stats.inJail &&
-        extra.body
-      ) {
-        list.push(extra);
+  }
+
+  function assignWitnesses(crimeX, crimeY, subject) {
+    const witnesses = [];
+    for (const cop of officers) {
+      if (dist(cop.x, cop.y, crimeX, crimeY) <= POLICE_WITNESS_RANGE) {
+        cop.alerted = true;
+        cop.chaseTarget = subject;
+        witnesses.push(cop);
       }
     }
-    return list;
+    return witnesses;
+  }
+
+  /**
+   * Report a murder at a world position.
+   * Only officers within POLICE_WITNESS_RANGE become alerted.
+   * If nobody saw it, no wanted status and no chase.
+   */
+  function reportCrimeAt(crimeX, crimeY, stats, body, kind = "player", name = "You") {
+    if (!stats?.alive || stats.inJail) {
+      return { witnessed: false, count: 0 };
+    }
+
+    const subject = { body, stats, kind, name };
+    const witnesses = assignWitnesses(crimeX, crimeY, subject);
+
+    if (witnesses.length === 0) {
+      // Clean getaway — not wanted
+      if (kind === "player") {
+        setPlayerMessage(
+          stats,
+          "Nobody saw that. You're in the clear… for now.",
+          2.5
+        );
+      } else {
+        stats.message = "Crime unseen.";
+        stats.messageTimer = 2;
+      }
+      return { witnessed: false, count: 0 };
+    }
+
+    stats.wanted = true;
+
+    if (kind === "player") {
+      setPlayerMessage(
+        stats,
+        `Spotted! ${witnesses.length} officer${witnesses.length > 1 ? "s" : ""} saw the crime — RUN!`,
+        3.5
+      );
+    } else {
+      stats.message = `${name} was seen!`;
+      stats.messageTimer = 2.5;
+    }
+
+    return { witnessed: true, count: witnesses.length };
   }
 
   function reportMurder() {
-    const stats = getStats();
-    if (!stats.alive || stats.inJail) {
-      return;
-    }
-    stats.wanted = true;
-    alertAll();
-    setPlayerMessage(stats, "WANTED! Police are hunting you for murder.", 3);
+    const player = getPlayer();
+    return reportCrimeAt(
+      player.x,
+      player.y,
+      getStats(),
+      player,
+      "player",
+      "You"
+    );
   }
 
-  /** Agent (or any stats+body) commits murder. */
   function reportCrime(stats, body) {
-    if (!stats?.alive || stats.inJail) {
-      return;
-    }
-    stats.wanted = true;
-    alertAll();
-    if (body?.name) {
-      stats.message = `${body.name} is WANTED!`;
-      stats.messageTimer = 2.5;
-    }
+    const x = body?.x ?? 0;
+    const y = body?.y ?? 0;
+    return reportCrimeAt(
+      x,
+      y,
+      stats,
+      body,
+      "agent",
+      body?.name || "Agent"
+    );
   }
 
   function jailSubject(stats, body, kind = "player") {
@@ -164,9 +214,7 @@ export function createPoliceSystem({
       body.rotation = 0;
     }
 
-    for (const cop of officers) {
-      cop.alerted = false;
-    }
+    clearChaseFor(stats);
 
     if (kind === "player") {
       setPlayerMessage(
@@ -186,6 +234,7 @@ export function createPoliceSystem({
     stats.wanted = false;
     body.x = jail.releaseX;
     body.y = jail.releaseY;
+    clearChaseFor(stats);
 
     if (reason) {
       if (body === getPlayer()) {
@@ -197,14 +246,10 @@ export function createPoliceSystem({
     }
   }
 
-  function sendToJail() {
-    jailSubject(getStats(), getPlayer(), "player");
-  }
-
   function releaseFromJail(reason) {
     releaseSubject(getStats(), getPlayer(), reason);
+    clearAllChases();
     for (const cop of officers) {
-      cop.alerted = false;
       const spawn = findRoadSpawn();
       cop.x = spawn.x;
       cop.y = spawn.y;
@@ -229,7 +274,6 @@ export function createPoliceSystem({
     }
   }
 
-  /** Agent jail release after timer (called from agent system or here). */
   function finishAgentSentence(stats, body) {
     if (!stats.inJail) {
       return;
@@ -273,21 +317,92 @@ export function createPoliceSystem({
     return true;
   }
 
+  function isValidChase(target) {
+    return (
+      target &&
+      target.stats &&
+      target.body &&
+      target.stats.alive &&
+      target.stats.wanted &&
+      !target.stats.inJail
+    );
+  }
+
   function updatePolice(deltaSeconds) {
     updatePlayerJail(deltaSeconds);
 
-    const wanted = listWanted();
-    const anyoneWanted = wanted.length > 0;
+    const player = getPlayer();
+    const pStats = getStats();
+    const extras = getExtraWanted();
+
+    // Active chase subjects (for join logic)
+    const activeSubjects = [];
+    if (pStats.alive && pStats.wanted && !pStats.inJail) {
+      activeSubjects.push({
+        body: player,
+        stats: pStats,
+        kind: "player",
+        name: "You"
+      });
+    }
+    for (const extra of extras) {
+      if (
+        extra?.stats?.alive &&
+        extra.stats.wanted &&
+        !extra.stats.inJail &&
+        extra.body
+      ) {
+        activeSubjects.push(extra);
+      }
+    }
+
+    const anyoneChasing = officers.some(
+      (c) => c.alerted && isValidChase(c.chaseTarget)
+    );
     const anyoneJailed =
-      getStats().inJail ||
-      getExtraWanted().some((w) => w.stats?.inJail);
+      pStats.inJail || extras.some((w) => w.stats?.inJail);
 
     for (const cop of officers) {
+      // Drop invalid targets
+      if (cop.chaseTarget && !isValidChase(cop.chaseTarget)) {
+        cop.alerted = false;
+        cop.chaseTarget = null;
+      }
+
+      // Idle cop near an already-wanted suspect can join (saw them fleeing).
+      if (!cop.alerted && activeSubjects.length > 0) {
+        let nearest = null;
+        let best = POLICE_JOIN_RANGE;
+        for (const sub of activeSubjects) {
+          const d = dist(cop.x, cop.y, sub.body.x, sub.body.y);
+          if (d < best) {
+            best = d;
+            nearest = sub;
+          }
+        }
+        if (nearest) {
+          cop.alerted = true;
+          cop.chaseTarget = nearest;
+        }
+      }
+
       let moveX = 0;
       let moveY = 0;
       let speed = POLICE_PATROL_SPEED;
 
-      if (anyoneJailed && !anyoneWanted) {
+      if (cop.alerted && isValidChase(cop.chaseTarget)) {
+        const target = cop.chaseTarget;
+        speed = POLICE_CHASE_SPEED;
+        const dx = target.body.x - cop.x;
+        const dy = target.body.y - cop.y;
+        const d = Math.hypot(dx, dy) || 1;
+        moveX = dx / d;
+        moveY = dy / d;
+
+        if (d <= POLICE_ARREST_RANGE) {
+          jailSubject(target.stats, target.body, target.kind || "agent");
+        }
+      } else if (anyoneJailed && !anyoneChasing) {
         const tx = jail.x + random(-40, 40);
         const ty = jail.y + random(-40, 40);
         const dx = tx - cop.x;
@@ -296,36 +411,6 @@ export function createPoliceSystem({
         moveX = dx / len;
         moveY = dy / len;
         speed = POLICE_PATROL_SPEED * 0.35;
-      } else if (anyoneWanted || cop.alerted) {
-        // Chase nearest wanted subject.
-        let nearest = null;
-        let best = Infinity;
-        for (const sub of wanted) {
-          const d = Math.hypot(sub.body.x - cop.x, sub.body.y - cop.y);
-          if (d < best) {
-            best = d;
-            nearest = sub;
-          }
-        }
-
-        if (nearest) {
-          speed = POLICE_CHASE_SPEED;
-          const dx = nearest.body.x - cop.x;
-          const dy = nearest.body.y - cop.y;
-          const dist = Math.hypot(dx, dy) || 1;
-          moveX = dx / dist;
-          moveY = dy / dist;
-
-          if (dist <= POLICE_ARREST_RANGE) {
-            jailSubject(
-              nearest.stats,
-              nearest.body,
-              nearest.kind || "agent"
-            );
-          }
-        } else {
-          cop.alerted = false;
-        }
       } else {
         cop.changeTimer -= deltaSeconds;
         if (cop.changeTimer <= 0) {
@@ -353,6 +438,28 @@ export function createPoliceSystem({
 
       if (moveX !== 0 || moveY !== 0) {
         cop.rotation = Math.atan2(moveY, moveX) + Math.PI / 2;
+      }
+    }
+
+    // Clear wanted if no cop is still chasing them
+    function clearWantedIfNoPursuit(stats) {
+      if (!stats.wanted || stats.inJail) {
+        return;
+      }
+      const stillHunted = officers.some(
+        (c) => c.alerted && c.chaseTarget?.stats === stats
+      );
+      if (!stillHunted) {
+        // Keep wanted only while at least one witness is still after them.
+        // If all witnesses died/cleared, drop heat.
+        stats.wanted = false;
+      }
+    }
+
+    clearWantedIfNoPursuit(pStats);
+    for (const extra of extras) {
+      if (extra?.stats) {
+        clearWantedIfNoPursuit(extra.stats);
       }
     }
   }

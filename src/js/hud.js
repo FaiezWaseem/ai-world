@@ -13,6 +13,7 @@ import {
   TAX_RATE,
   WORLD_WIDTH
 } from "./config.js";
+import { totalPropertyValue } from "./properties.js";
 import { isHighwayCol, isHighwayRow } from "./roads.js";
 
 const MINIMAP_SIZE = 190;
@@ -74,25 +75,48 @@ function setBar(bar, percent) {
 export function createHUD({
   app,
   hud,
-  buildingColliders
+  buildingColliders = []
 }) {
+  // Panel visibility (keyboard + X buttons)
+  const uiVisible = {
+    chat: true,
+    minimap: true,
+    netWorth: true
+  };
+
   const instructions = new PIXI.Text({
     text:
-      "WASD move · E job · J eat · 1–5 buy gun · F shoot\n" +
-      "Q gun · B bribe jail ($" +
-      JAIL_BRIBE +
-      ") · K/L save/load\n" +
-      "Murder → WANTED → jail " +
-      JAIL_WAIT_SEC +
-      "s + $" +
-      JAIL_FINE +
-      " · Hunger/Tax tick",
+      "WASD · E job · J eat · P property · T talk to agent\n" +
+      "1–5 gun · F shoot · M map · C chat · N net worth\n" +
+      "Agents greet you nearby · B bribe · K/L save",
     style: textStyle(13, 0xffffff, { lineHeight: 17 })
   });
 
   instructions.x = 20;
   instructions.y = 14;
   hud.addChild(instructions);
+
+  function makeCloseButton(size = 22) {
+    const btn = new PIXI.Container();
+    btn.eventMode = "static";
+    btn.cursor = "pointer";
+
+    const bg = new PIXI.Graphics();
+    bg.roundRect(0, 0, size, size, 6)
+      .fill({ color: 0x1e293b, alpha: 0.95 })
+      .stroke({ color: 0xf8fafc, width: 1, alpha: 0.7 });
+
+    const xMark = new PIXI.Text({
+      text: "✕",
+      style: textStyle(13, 0xf8fafc)
+    });
+    xMark.anchor.set(0.5);
+    xMark.x = size / 2;
+    xMark.y = size / 2;
+
+    btn.addChild(bg, xMark);
+    return btn;
+  }
 
   // Net-worth card (top-left) — same card style as chat.
   const NW_WIDTH = 260;
@@ -117,6 +141,14 @@ export function createHUD({
   netWorthTitle.x = 12;
   netWorthTitle.y = 7;
 
+  const netWorthClose = makeCloseButton(22);
+  netWorthClose.x = NW_WIDTH - 30;
+  netWorthClose.y = 5;
+  netWorthClose.on("pointertap", () => {
+    uiVisible.netWorth = false;
+    applyPanelVisibility();
+  });
+
   const agentPanel = new PIXI.Text({
     text: "Loading agents…",
     style: {
@@ -136,7 +168,7 @@ export function createHUD({
   agentPanel.x = 14;
   agentPanel.y = 42;
 
-  netWorthBox.addChild(netWorthBg, netWorthTitle, agentPanel);
+  netWorthBox.addChild(netWorthBg, netWorthTitle, agentPanel, netWorthClose);
   netWorthBox.x = 16;
   netWorthBox.y = 88;
   hud.addChild(netWorthBox);
@@ -165,6 +197,14 @@ export function createHUD({
   chatTitle.x = 12;
   chatTitle.y = 7;
 
+  const chatClose = makeCloseButton(22);
+  chatClose.x = CHAT_WIDTH - 30;
+  chatClose.y = 5;
+  chatClose.on("pointertap", () => {
+    uiVisible.chat = false;
+    applyPanelVisibility();
+  });
+
   const chatPanel = new PIXI.Text({
     text: "Waiting for agents to talk…",
     style: {
@@ -186,7 +226,7 @@ export function createHUD({
   chatPanel.x = 12;
   chatPanel.y = 40;
 
-  chatBox.addChild(chatBg, chatTitle, chatPanel);
+  chatBox.addChild(chatBg, chatTitle, chatPanel, chatClose);
   chatBox.visible = true;
   hud.addChild(chatBox);
 
@@ -328,6 +368,14 @@ export function createHUD({
   }
 
   for (const building of buildingColliders) {
+    let color = building.minimapColor || 0x64748b;
+    if (building.forSale) {
+      color = 0x4ade80;
+    } else if (building.owner === "player") {
+      color = 0xfbbf24;
+    } else if (building.owner) {
+      color = 0xc084fc;
+    }
     minimapCity
       .rect(
         building.x * minimapScale,
@@ -335,7 +383,7 @@ export function createHUD({
         building.width * minimapScale,
         building.height * minimapScale
       )
-      .fill({ color: building.minimapColor || 0x64748b });
+      .fill({ color });
   }
 
   minimapPlayer
@@ -351,7 +399,66 @@ export function createHUD({
   minimapContainer.addChild(minimapCity);
   minimapContainer.addChild(minimapAgentsLayer);
   minimapContainer.addChild(minimapPlayer);
+
+  const minimapClose = makeCloseButton(22);
+  minimapClose.x = MINIMAP_SIZE - 6;
+  minimapClose.y = -6;
+  minimapClose.on("pointertap", () => {
+    uiVisible.minimap = false;
+    applyPanelVisibility();
+  });
+  minimapContainer.addChild(minimapClose);
+
   hud.addChild(minimapContainer);
+
+  // Hint when panels are hidden
+  const hiddenHints = new PIXI.Text({
+    text: "",
+    style: textStyle(12, 0x94a3b8, { fontWeight: "normal" })
+  });
+  hiddenHints.x = 20;
+  hiddenHints.y = 72;
+  hud.addChild(hiddenHints);
+
+  function applyPanelVisibility() {
+    chatBox.visible = uiVisible.chat;
+    minimapContainer.visible = uiVisible.minimap;
+    netWorthBox.visible = uiVisible.netWorth;
+
+    const closed = [];
+    if (!uiVisible.chat) {
+      closed.push("C chat");
+    }
+    if (!uiVisible.minimap) {
+      closed.push("M map");
+    }
+    if (!uiVisible.netWorth) {
+      closed.push("N net");
+    }
+    hiddenHints.text = closed.length
+      ? `Hidden — press ${closed.join(" · ")} to show`
+      : "";
+  }
+
+  function toggleChat() {
+    uiVisible.chat = !uiVisible.chat;
+    applyPanelVisibility();
+    return uiVisible.chat;
+  }
+
+  function toggleMinimap() {
+    uiVisible.minimap = !uiVisible.minimap;
+    applyPanelVisibility();
+    return uiVisible.minimap;
+  }
+
+  function toggleNetWorth() {
+    uiVisible.netWorth = !uiVisible.netWorth;
+    applyPanelVisibility();
+    return uiVisible.netWorth;
+  }
+
+  applyPanelVisibility();
 
   function positionHUD() {
     const w = app.screen.width;
@@ -480,6 +587,13 @@ export function createHUD({
     setBar(healthBar, stats.health);
     setBar(hungerBar, stats.hunger);
 
+    const playerProps = totalPropertyValue(buildingColliders, "player");
+    const playerGuns = (stats.ownedGuns || []).reduce((sum, id) => {
+      const g = GUNS.find((x) => x.id === id);
+      return sum + (g?.price || 0);
+    }, 0);
+    const playerNw = (stats.money || 0) + playerGuns + playerProps;
+
     if (Array.isArray(extras.agents)) {
       updateMinimapAgents(extras.agents);
 
@@ -490,11 +604,10 @@ export function createHUD({
           (sum, id) => sum + (gunPrice.get(id) || 0),
           0
         );
+        const props = totalPropertyValue(buildingColliders, a.id);
         return {
           agent: a,
-          cash,
-          gunsValue,
-          netWorth: cash + gunsValue
+          netWorth: cash + gunsValue + props
         };
       });
 
@@ -520,13 +633,13 @@ export function createHUD({
           return `• ${who}: ${c.text}`;
         })
         .join("\n");
-      chatBox.visible = true;
     } else if (Array.isArray(extras.chat)) {
       chatPanel.text = "Waiting for agents to talk…";
-      chatBox.visible = true;
     }
+    // Respect user toggle — do not force chat open on updates.
+    chatBox.visible = uiVisible.chat;
 
-    moneyText.text = `$${stats.money}`;
+    moneyText.text = `$${stats.money}  ·  NW $${playerNw}`;
     jobText.text = stats.job
       ? `Job: ${stats.job.title} @ ${stats.job.label}`
       : "Job: Unemployed";
@@ -539,7 +652,7 @@ export function createHUD({
     if (stats.inJail) {
       wantedText.text = "";
     } else if (stats.wanted) {
-      wantedText.text = "★ WANTED ★  Police chasing!";
+      wantedText.text = "★ WANTED ★  Officers who saw you are chasing!";
     } else {
       wantedText.text = "";
     }
@@ -575,6 +688,11 @@ export function createHUD({
   return {
     updateMinimapPlayer,
     updateHUD,
-    positionHUD
+    positionHUD,
+    toggleChat,
+    toggleMinimap,
+    toggleNetWorth,
+    isChatVisible: () => uiVisible.chat,
+    isMinimapVisible: () => uiVisible.minimap
   };
 }

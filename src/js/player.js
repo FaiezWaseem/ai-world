@@ -76,6 +76,8 @@ export function createPlayerStats() {
     jailTimer: 0,
     debt: 0,
     loansOut: 0,
+    ownedPropertyIds: [],
+    propertyRentTimer: 0,
     message: "",
     messageTimer: 0
   };
@@ -100,6 +102,8 @@ export function resetPlayerStats(stats) {
   stats.jailTimer = 0;
   stats.debt = 0;
   stats.loansOut = 0;
+  stats.ownedPropertyIds = [];
+  stats.propertyRentTimer = 0;
   stats.message = "Find a job, earn money, then eat!";
   stats.messageTimer = 4;
 }

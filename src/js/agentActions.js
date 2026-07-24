@@ -11,6 +11,7 @@ import {
 } from "./config.js";
 import { clamp, randomItem } from "./helpers.js";
 import { addIncome } from "./player.js";
+import { buyProperty, isBuyable } from "./properties.js";
 
 export function edgeDistToBuilding(x, y, b) {
   const cx = clamp(x, b.x, b.x + b.width);
@@ -128,6 +129,44 @@ export function doEat(agent, buildingColliders) {
   agent.lastResult = "no food nearby";
 }
 
+export function doBuyProperty(agent, buildingColliders) {
+  // Prefer nearest for-sale building within interact range, else any nearby.
+  let best = null;
+  let bestD = Infinity;
+
+  for (const b of buildingColliders) {
+    if (!isBuyable(b)) {
+      continue;
+    }
+    const d = edgeDistToBuilding(agent.x, agent.y, b);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+
+  if (!best || bestD > INTERACT_DISTANCE + 20) {
+    agent.lastResult = "no property nearby";
+    return false;
+  }
+
+  if (agent.stats.money < best.price) {
+    agent.lastResult = `need $${best.price} for property`;
+    say(agent, "Can't afford this place.", 2.5);
+    return false;
+  }
+
+  const result = buyProperty(agent.stats, best, agent.id, agent.name);
+  if (!result.ok) {
+    agent.lastResult = result.reason;
+    return false;
+  }
+
+  agent.lastResult = `bought ${result.label} $${result.price}`;
+  say(agent, `Bought ${result.label}!`, 3.5);
+  return true;
+}
+
 export function doBuyGun(agent, buildingColliders, gunId) {
   const b = interactNear(agent, buildingColliders, "gunshop");
   if (!b) {
@@ -216,18 +255,58 @@ export function doShoot(agent, npcSystem, effectsLayer, police) {
   }
 }
 
-export function doTalk(agent, decision, ctx, agents, pushChat) {
-  const text = decision.say || "Hey there.";
-  say(agent, text, 4);
+function isPlayerName(name) {
+  if (!name) {
+    return false;
+  }
+  const n = String(name).toLowerCase();
+  return n === "you" || n === "player" || n === "human";
+}
+
+export function doTalk(agent, decision, ctx, agents, pushChat, playerApi = {}) {
+  const { getPlayerStats, notifyPlayer } = playerApi;
+  const text =
+    decision.say ||
+    (ctx.playerNearby
+      ? `Hey! I'm ${agent.name}.`
+      : "Hey there.");
+
+  say(agent, text, 5);
+
+  const sayTo = decision.sayTo || decision.target;
+  const talkToPlayer =
+    isPlayerName(sayTo) ||
+    (!sayTo && ctx.playerNearby && Math.random() < 0.55) ||
+    (ctx.playerNearby &&
+      ctx.nearbyAgents[0]?.isPlayer &&
+      !decision.sayTo);
+
+  if (talkToPlayer && ctx.playerNearby) {
+    pushChat(agent.name, "You", text);
+    if (typeof notifyPlayer === "function") {
+      notifyPlayer(`${agent.name}: "${text}"`, 4);
+    } else if (getPlayerStats) {
+      const ps = getPlayerStats();
+      if (ps) {
+        ps.message = `${agent.name}: "${text}"`;
+        ps.messageTimer = 4;
+      }
+    }
+    agent.lastResult = "talked to player";
+    return;
+  }
 
   let partner = null;
-  if (decision.sayTo) {
+  if (sayTo && !isPlayerName(sayTo)) {
     partner = agents.find(
-      (a) => a.name.toLowerCase() === decision.sayTo.toLowerCase()
+      (a) => a.name.toLowerCase() === String(sayTo).toLowerCase()
     );
   }
-  if (!partner && ctx.nearbyAgents[0]) {
-    partner = agents.find((a) => a.name === ctx.nearbyAgents[0].name);
+  if (!partner && ctx.nearbyAgents?.length) {
+    const other = ctx.nearbyAgents.find((a) => !a.isPlayer);
+    if (other) {
+      partner = agents.find((a) => a.name === other.name);
+    }
   }
 
   pushChat(agent.name, partner?.name || "all", text);
@@ -238,7 +317,8 @@ export function doTalk(agent, decision, ctx, agents, pushChat) {
       "Stay safe out there.",
       `I'm at $${partner.stats.money}.`,
       "Need food soon.",
-      "Police are rough."
+      "Police are rough.",
+      "Talked to the human earlier?"
     ]);
     setTimeout(() => {
       if (partner.stats.alive) {
@@ -248,7 +328,7 @@ export function doTalk(agent, decision, ctx, agents, pushChat) {
     }, 900 + Math.random() * 1200);
   }
 
-  agent.lastResult = "talked";
+  agent.lastResult = partner ? `talked to ${partner.name}` : "talked";
 }
 
 function findNearbyAgent(agent, agents, nameHint) {

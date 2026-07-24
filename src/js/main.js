@@ -14,9 +14,11 @@ import {
   findNearbyPoi,
   getInteractionPrompt,
   tryBuyGun,
+  tryBuyProperty,
   tryEatInteract,
   tryJobInteract
 } from "./interaction.js";
+import { tickPropertyRent } from "./properties.js";
 import { createNpcSystem } from "./npcs.js";
 import {
   createInput,
@@ -138,6 +140,7 @@ import { createTrafficSystem } from "./traffic.js";
     effectsLayer,
     police,
     getPlayer: () => player,
+    getPlayerStats: () => stats,
     count: agentCount
   });
   agentsRef.system = agents;
@@ -156,13 +159,14 @@ import { createTrafficSystem } from "./traffic.js";
     player.x = spot.x;
     player.y = spot.y;
   } else if (didLoad && stats.wanted) {
+    // Re-alert only cops near the loaded player (not the whole city).
     police.reportMurder();
   }
 
   if (!didLoad) {
     setPlayerMessage(
       stats,
-      `${agentCount} AI citizens online. They work, eat, talk — and may commit crimes.`,
+      `${agentCount} AI citizens online. Walk near them — they talk to you. Press T to chat back.`,
       5
     );
   }
@@ -205,8 +209,23 @@ import { createTrafficSystem } from "./traffic.js";
       }
     }
 
+    // Panel toggles (work even while dead / jailed)
+    if (input.consumePress("KeyM")) {
+      const on = ui.toggleMinimap();
+      setPlayerMessage(stats, on ? "Minimap shown" : "Minimap hidden", 1.2);
+    }
+    if (input.consumePress("KeyC")) {
+      const on = ui.toggleChat();
+      setPlayerMessage(stats, on ? "Agent chat shown" : "Agent chat hidden", 1.2);
+    }
+    if (input.consumePress("KeyN")) {
+      const on = ui.toggleNetWorth();
+      setPlayerMessage(stats, on ? "Net worth shown" : "Net worth hidden", 1.2);
+    }
+
     updatePlayerStats(stats, deltaSeconds);
     updateCombat(stats, deltaSeconds);
+    tickPropertyRent(stats, "player", buildingColliders, deltaSeconds);
     autoSave.update(deltaSeconds);
 
     traffic.updateTrafficLights(deltaSeconds);
@@ -236,6 +255,14 @@ import { createTrafficSystem } from "./traffic.js";
 
     if (stats.alive && !stats.inJail && input.consumePress("KeyJ")) {
       tryEatInteract(stats, nearby);
+    }
+
+    if (stats.alive && !stats.inJail && input.consumePress("KeyP")) {
+      tryBuyProperty(stats, nearby);
+    }
+
+    if (stats.alive && !stats.inJail && input.consumePress("KeyT")) {
+      agents.playerTalkToNearest();
     }
 
     if (stats.alive && !stats.inJail && input.consumePress("KeyQ")) {

@@ -10,6 +10,11 @@ import {
 } from "./config.js";
 import { clamp } from "./helpers.js";
 import { addIncome, setPlayerMessage } from "./player.js";
+import {
+  buyProperty,
+  getPropertyLabel,
+  isBuyable
+} from "./properties.js";
 
 /** workplaceId → timestamp (performance.now) until re-apply allowed */
 const rejectUntil = new Map();
@@ -42,7 +47,12 @@ export function findNearbyPoi(player, buildingColliders) {
   let bestDist = INTERACT_DISTANCE;
 
   for (const building of buildingColliders) {
-    if (!building.type || !SPECIAL_BUILDINGS[building.type]) {
+    const isPoi =
+      building.type && SPECIAL_BUILDINGS[building.type];
+    const isProperty =
+      building.forSale || building.owner || building.price > 0;
+
+    if (!isPoi && !isProperty) {
       continue;
     }
 
@@ -57,11 +67,23 @@ export function findNearbyPoi(player, buildingColliders) {
 }
 
 function buildPrompt(stats, poi) {
-  const theme = SPECIAL_BUILDINGS[poi.type];
-  const label = theme?.label || poi.type.toUpperCase();
-  const job = JOBS[poi.type];
-  const food = FOOD[poi.type];
+  const theme = poi.type ? SPECIAL_BUILDINGS[poi.type] : null;
+  const label = theme?.label || poi.label || "BUILDING";
+  const job = poi.type ? JOBS[poi.type] : null;
+  const food = poi.type ? FOOD[poi.type] : null;
   const lines = [`[${label}]`];
+
+  if (isBuyable(poi)) {
+    lines.push(
+      `P  BUY PROPERTY  $${poi.price}  (rent +$${poi.rentIncome}/45s)`
+    );
+  } else if (poi.owner === "player") {
+    lines.push(
+      `YOUR PROPERTY · rent +$${poi.rentIncome}/45s`
+    );
+  } else if (poi.owner) {
+    lines.push(`Owned by ${poi.ownerName || poi.owner}`);
+  }
 
   if (food) {
     lines.push(
@@ -287,6 +309,53 @@ export function tryBuyGun(stats, poi, gunIndex) {
     stats,
     `Bought ${gun.name} for $${gun.price}! F/Space to shoot.`,
     3
+  );
+}
+
+/** Buy nearby property (key: P). */
+export function tryBuyProperty(stats, poi) {
+  if (!stats.alive || stats.inJail) {
+    return;
+  }
+
+  if (!poi) {
+    setPlayerMessage(stats, "Stand next to a FOR SALE building.", 2);
+    return;
+  }
+
+  if (poi.owner === "player") {
+    setPlayerMessage(
+      stats,
+      `You already own this ${getPropertyLabel(poi)}. Rent +$${poi.rentIncome}/45s.`,
+      2.5
+    );
+    return;
+  }
+
+  if (poi.owner) {
+    setPlayerMessage(
+      stats,
+      `Owned by ${poi.ownerName || poi.owner}.`,
+      2
+    );
+    return;
+  }
+
+  if (!isBuyable(poi)) {
+    setPlayerMessage(stats, "This building is not for sale.", 2);
+    return;
+  }
+
+  const result = buyProperty(stats, poi, "player", "You");
+  if (!result.ok) {
+    setPlayerMessage(stats, `Can't buy: ${result.reason}`, 2.5);
+    return;
+  }
+
+  setPlayerMessage(
+    stats,
+    `Bought ${result.label} for $${result.price}! Rent +$${result.rent}/45s`,
+    3.5
   );
 }
 
