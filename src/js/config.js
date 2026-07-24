@@ -106,8 +106,69 @@ export const SPECIAL_BUILDINGS = {
     window: 0xe0f2fe,
     minimap: 0xcbd5e1,
     count: 3
+  },
+  gunshop: {
+    label: "GUN SHOP",
+    color: 0x57534e,
+    roof: 0x1c1917,
+    accent: 0xfacc15,
+    window: 0xfef3c7,
+    minimap: 0xa8a29e,
+    count: 2
   }
 };
+
+/**
+ * Guns for sale at GUN SHOP (buy with 1–5 while nearby).
+ * Shoot with F / Space. Cycle owned guns with Q.
+ */
+export const GUNS = [
+  {
+    id: "pistol",
+    name: "Pistol",
+    price: 50,
+    damage: 40,
+    range: 260,
+    fireCooldown: 0.45,
+    color: 0xcbd5e1
+  },
+  {
+    id: "shotgun",
+    name: "Shotgun",
+    price: 120,
+    damage: 90,
+    range: 150,
+    fireCooldown: 0.95,
+    color: 0xa78bfa
+  },
+  {
+    id: "smg",
+    name: "SMG",
+    price: 200,
+    damage: 28,
+    range: 300,
+    fireCooldown: 0.14,
+    color: 0x38bdf8
+  },
+  {
+    id: "rifle",
+    name: "Assault Rifle",
+    price: 350,
+    damage: 55,
+    range: 420,
+    fireCooldown: 0.28,
+    color: 0x4ade80
+  },
+  {
+    id: "sniper",
+    name: "Sniper",
+    price: 500,
+    damage: 100,
+    range: 700,
+    fireCooldown: 1.25,
+    color: 0xf97316
+  }
+];
 
 /** Job openings available at each property type. */
 export const WORK_SHIFT_SECONDS = 10;
@@ -124,7 +185,8 @@ export const JOBS = {
   grocery: { title: "Cashier", pay: 16, rejectChance: 0.25 },
   gym: { title: "Trainer", pay: 22, rejectChance: 0.35 },
   office: { title: "Clerk", pay: 32, rejectChance: 0.45 },
-  barber: { title: "Stylist", pay: 18, rejectChance: 0.3 }
+  barber: { title: "Stylist", pay: 18, rejectChance: 0.3 },
+  gunshop: { title: "Clerk", pay: 24, rejectChance: 0.35 }
 };
 
 /** Food you can buy (restaurants + markets). */

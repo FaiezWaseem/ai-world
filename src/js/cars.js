@@ -249,6 +249,10 @@ export function createCarSystem({
     }
 
     for (const npc of getNpcs()) {
+      if (npc.alive === false) {
+        continue;
+      }
+
       const dx = npc.x - car.x;
       const dy = npc.y - car.y;
       const stopDistance = CAR_LENGTH * 0.75 + NPC_SIZE;

@@ -1,5 +1,6 @@
 import {
   FOOD,
+  GUNS,
   INTERACT_DISTANCE,
   JOB_REJECT_CHANCE,
   JOB_REJECT_COOLDOWN_SEC,
@@ -68,9 +69,23 @@ function buildPrompt(stats, poi) {
     );
   }
 
+  if (poi.type === "gunshop") {
+    lines.push("Buy guns (keys 1–5):");
+    GUNS.forEach((gun, i) => {
+      const owned = stats.ownedGuns?.includes(gun.id);
+      lines.push(
+        `  ${i + 1}  ${gun.name}  $${gun.price}` +
+          (owned ? "  [OWNED]" : "") +
+          `  dmg ${gun.damage} · rng ${gun.range}`
+      );
+    });
+    lines.push("Q cycle weapons · F/Space shoot");
+  }
+
   if (job) {
     const employedHere =
-      stats.job && stats.job.workplaceId === poi.id;
+      stats.job &&
+      (stats.job.workplaceId === poi.id || stats.job.type === poi.type);
 
     if (employedHere) {
       if (stats.workCooldown > 0) {
@@ -132,7 +147,10 @@ function tryJobAction(stats, poi) {
     return false;
   }
 
-  const employedHere = stats.job && stats.job.workplaceId === poi.id;
+  // Match by workplace id, or by job type (survives save / new map layout).
+  const employedHere =
+    stats.job &&
+    (stats.job.workplaceId === poi.id || stats.job.type === poi.type);
   const label = SPECIAL_BUILDINGS[poi.type]?.label || poi.type;
 
   if (!employedHere) {
@@ -229,6 +247,47 @@ export function tryJobInteract(stats, poi) {
   }
 
   tryJobAction(stats, poi);
+}
+
+/** Buy gun by catalog index 0–4 while at gun shop (keys 1–5). */
+export function tryBuyGun(stats, poi, gunIndex) {
+  if (!stats.alive) {
+    return;
+  }
+
+  if (!poi || poi.type !== "gunshop") {
+    setPlayerMessage(stats, "Visit a GUN SHOP to buy weapons.", 2);
+    return;
+  }
+
+  const gun = GUNS[gunIndex];
+  if (!gun) {
+    return;
+  }
+
+  if (stats.ownedGuns.includes(gun.id)) {
+    stats.equippedGunId = gun.id;
+    setPlayerMessage(stats, `Already own ${gun.name} — equipped.`, 2);
+    return;
+  }
+
+  if (stats.money < gun.price) {
+    setPlayerMessage(
+      stats,
+      `Need $${gun.price} for ${gun.name} (have $${stats.money}).`,
+      2.5
+    );
+    return;
+  }
+
+  stats.money -= gun.price;
+  stats.ownedGuns.push(gun.id);
+  stats.equippedGunId = gun.id;
+  setPlayerMessage(
+    stats,
+    `Bought ${gun.name} for $${gun.price}! F/Space to shoot.`,
+    3
+  );
 }
 
 export function getInteractionPrompt(stats, poi) {

@@ -9,6 +9,9 @@ import {
 } from "./config.js";
 import { random, randomItem } from "./helpers.js";
 
+const NPC_MAX_HEALTH = 100;
+const RESPAWN_SECONDS = 8;
+
 function findRoadSpawn() {
   const verticalRoad = Math.random() < 0.5;
 
@@ -47,6 +50,10 @@ export function createNpcSystem({ npcLayer, moveEntity }) {
     npc.changeTimer = random(1.2, 4);
   }
 
+  function rollCash() {
+    return Math.floor(random(0, 101));
+  }
+
   function createNPC() {
     const npc = new PIXI.Container();
     const color = randomItem(NPC_COLORS);
@@ -71,6 +78,8 @@ export function createNpcSystem({ npcLayer, moveEntity }) {
 
     npc.addChild(shadow);
     npc.addChild(body);
+    npc.bodyGfx = body;
+    npc.baseColor = color;
 
     const spawn = findRoadSpawn();
     npc.x = spawn.x;
@@ -79,14 +88,99 @@ export function createNpcSystem({ npcLayer, moveEntity }) {
     npc.directionX = 0;
     npc.directionY = 0;
     npc.changeTimer = 0;
+    npc.alive = true;
+    npc.health = NPC_MAX_HEALTH;
+    npc.cash = rollCash();
+    npc.respawnTimer = 0;
+    npc.visible = true;
 
     npcLayer.addChild(npc);
     npcs.push(npc);
     chooseNPCDirection(npc);
   }
 
+  function damageNpc(npc, damage) {
+    if (!npc.alive) {
+      return { killed: false, health: 0, cash: 0 };
+    }
+
+    npc.health -= damage;
+
+    // Flash red on hit.
+    npc.bodyGfx.clear();
+    npc.bodyGfx
+      .circle(0, 0, NPC_SIZE / 2)
+      .fill({ color: 0xef4444 })
+      .stroke({
+        color: 0xffffff,
+        width: 1.5
+      });
+
+    setTimeout(() => {
+      if (!npc.alive || !npc.bodyGfx) {
+        return;
+      }
+      npc.bodyGfx.clear();
+      npc.bodyGfx
+        .circle(0, 0, NPC_SIZE / 2)
+        .fill({ color: npc.baseColor })
+        .stroke({
+          color: 0xffffff,
+          width: 1.5
+        });
+    }, 80);
+
+    if (npc.health <= 0) {
+      const cash = npc.cash;
+      npc.alive = false;
+      npc.visible = false;
+      npc.respawnTimer = RESPAWN_SECONDS;
+      return {
+        killed: true,
+        health: 0,
+        cash
+      };
+    }
+
+    return {
+      killed: false,
+      health: npc.health,
+      cash: 0
+    };
+  }
+
+  function respawnNpc(npc) {
+    const spawn = findRoadSpawn();
+    npc.x = spawn.x;
+    npc.y = spawn.y;
+    npc.alive = true;
+    npc.visible = true;
+    npc.health = NPC_MAX_HEALTH;
+    npc.cash = rollCash();
+    npc.respawnTimer = 0;
+    npc.speed = random(45, 100);
+    chooseNPCDirection(npc);
+
+    npc.bodyGfx.clear();
+    npc.bodyGfx
+      .circle(0, 0, NPC_SIZE / 2)
+      .fill({ color: npc.baseColor })
+      .stroke({
+        color: 0xffffff,
+        width: 1.5
+      });
+  }
+
   function updateNPCs(deltaSeconds) {
     for (const npc of npcs) {
+      if (!npc.alive) {
+        npc.respawnTimer -= deltaSeconds;
+        if (npc.respawnTimer <= 0) {
+          respawnNpc(npc);
+        }
+        continue;
+      }
+
       npc.changeTimer -= deltaSeconds;
 
       if (npc.changeTimer <= 0) {
@@ -122,6 +216,7 @@ export function createNpcSystem({ npcLayer, moveEntity }) {
 
   return {
     npcs,
-    updateNPCs
+    updateNPCs,
+    damageNpc
   };
 }

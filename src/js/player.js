@@ -68,6 +68,9 @@ export function createPlayerStats() {
     hungerTimer: 0,
     taxTimer: 0,
     workCooldown: 0,
+    ownedGuns: [],
+    equippedGunId: null,
+    fireCooldown: 0,
     message: "",
     messageTimer: 0
   };
@@ -84,6 +87,9 @@ export function resetPlayerStats(stats) {
   stats.hungerTimer = 0;
   stats.taxTimer = 0;
   stats.workCooldown = 0;
+  stats.ownedGuns = [];
+  stats.equippedGunId = null;
+  stats.fireCooldown = 0;
   stats.message = "Find a job, earn money, then eat!";
   stats.messageTimer = 4;
 }

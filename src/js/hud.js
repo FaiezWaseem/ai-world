@@ -1,6 +1,7 @@
 import {
   CELL_SIZE,
   COLORS,
+  GUNS,
   GRID_COLS,
   GRID_ROWS,
   HUNGER_INTERVAL_SEC,
@@ -84,10 +85,10 @@ export function createHUD({
     text:
       "OPEN WORLD CITY\n" +
       "Move: WASD / Arrows · Sprint: Shift\n" +
-      "E: Take job / Work shift\n" +
-      "J: Eat meal (restaurant / market)\n" +
-      "Hunger −5% / 60s · Tax 10% of income / 3 min\n" +
-      "POIs: School · Market · Restaurant · Gym · Office · Barber",
+      "E: Job · J: Eat · 1–5: Buy gun at shop\n" +
+      "Q: Cycle gun · F/Space: Shoot · K: Save · L: Load\n" +
+      "Auto-save every 5s · Hunger −5%/60s · Tax/3min\n" +
+      "Gun shops · NPCs drop $0–100",
     style: {
       fontFamily: "Arial",
       fontSize: 13,
@@ -146,6 +147,23 @@ export function createHUD({
     }
   });
   hud.addChild(taxText);
+
+  const weaponText = new PIXI.Text({
+    text: "Weapon: None",
+    style: {
+      fontFamily: "Arial",
+      fontSize: 13,
+      fontWeight: "bold",
+      fill: 0xfde68a,
+      dropShadow: {
+        color: 0x000000,
+        alpha: 0.75,
+        blur: 2,
+        distance: 1
+      }
+    }
+  });
+  hud.addChild(weaponText);
 
   const jobText = new PIXI.Text({
     text: "Job: Unemployed",
@@ -334,11 +352,13 @@ export function createHUD({
     healthBar.root.y = baseY;
     hungerBar.root.y = baseY + 40;
     moneyText.x = 20;
-    moneyText.y = baseY - 48;
+    moneyText.y = baseY - 68;
     taxText.x = 20;
-    taxText.y = baseY - 28;
+    taxText.y = baseY - 48;
     jobText.x = 20;
-    jobText.y = baseY - 10;
+    jobText.y = baseY - 30;
+    weaponText.x = 20;
+    weaponText.y = baseY - 12;
     hungerTimerText.x = 20;
     hungerTimerText.y = baseY + 78;
 
@@ -371,6 +391,11 @@ export function createHUD({
     jobText.text = stats.job
       ? `Job: ${stats.job.title} @ ${stats.job.label}`
       : "Job: Unemployed";
+
+    const gun = GUNS.find((g) => g.id === stats.equippedGunId);
+    weaponText.text = gun
+      ? `Weapon: ${gun.name}  (dmg ${gun.damage})`
+      : "Weapon: None — buy at GUN SHOP";
 
     const taxSecsLeft = Math.max(0, TAX_INTERVAL_SEC - stats.taxTimer);
     const nextTax = Math.floor(stats.totalIncome * TAX_RATE);

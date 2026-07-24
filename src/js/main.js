@@ -1,12 +1,18 @@
-import { COLORS, WORLD_HEIGHT, WORLD_WIDTH } from "./config.js";
+import { COLORS, GUNS, WORLD_HEIGHT, WORLD_WIDTH } from "./config.js";
 import { updateCamera } from "./camera.js";
 import { generateCity } from "./city.js";
 import { createCarSystem } from "./cars.js";
+import {
+  cycleGun,
+  tryShoot,
+  updateCombat
+} from "./combat.js";
 import { createCollisionSystem } from "./collision.js";
 import { createHUD } from "./hud.js";
 import {
   findNearbyPoi,
   getInteractionPrompt,
+  tryBuyGun,
   tryEatInteract,
   tryJobInteract
 } from "./interaction.js";
@@ -16,10 +22,17 @@ import {
   createPlayer,
   createPlayerStats,
   respawnPlayer,
+  setPlayerMessage,
   updatePlayer,
   updatePlayerStats
 } from "./player.js";
 import { createRoads } from "./roads.js";
+import {
+  clearPlayerState,
+  loadPlayerState,
+  savePlayerState,
+  setupAutoSave
+} from "./save.js";
 import { createTrafficSystem } from "./traffic.js";
 
 (async () => {
@@ -46,6 +59,7 @@ import { createTrafficSystem } from "./traffic.js";
   const trafficLayer = new PIXI.Container();
   const carLayer = new PIXI.Container();
   const npcLayer = new PIXI.Container();
+  const effectsLayer = new PIXI.Container();
   const playerLayer = new PIXI.Container();
 
   world.addChild(groundLayer);
@@ -56,6 +70,7 @@ import { createTrafficSystem } from "./traffic.js";
   world.addChild(trafficLayer);
   world.addChild(carLayer);
   world.addChild(npcLayer);
+  world.addChild(effectsLayer);
   world.addChild(playerLayer);
 
   const background = new PIXI.Graphics();
@@ -106,17 +121,58 @@ import { createTrafficSystem } from "./traffic.js";
     buildingColliders
   });
 
-  stats.message = "Find a job, earn money, then eat!";
-  stats.messageTimer = 4;
+  const autoSave = setupAutoSave(player, stats, 5);
+  const didLoad = loadPlayerState(player, stats);
+
+  if (!didLoad) {
+    setPlayerMessage(
+      stats,
+      "New game — progress auto-saves. Press K to save, L to load.",
+      4
+    );
+  }
+
+  const buyGunKeys = [
+    "Digit1",
+    "Digit2",
+    "Digit3",
+    "Digit4",
+    "Digit5",
+    "Numpad1",
+    "Numpad2",
+    "Numpad3",
+    "Numpad4",
+    "Numpad5"
+  ];
 
   app.ticker.add((ticker) => {
     const deltaSeconds = Math.min(ticker.deltaMS / 1000, 0.05);
 
     if (!stats.alive && input.consumePress("KeyR")) {
       respawnPlayer(player, stats);
+      clearPlayerState();
+      autoSave.saveNow();
+    }
+
+    if (stats.alive && input.consumePress("KeyK")) {
+      if (savePlayerState(player, stats)) {
+        setPlayerMessage(stats, "Game saved.", 2);
+      } else {
+        setPlayerMessage(stats, "Save failed.", 2);
+      }
+    }
+
+    if (input.consumePress("KeyL")) {
+      if (loadPlayerState(player, stats)) {
+        // message set inside loadPlayerState
+      } else {
+        setPlayerMessage(stats, "No save found.", 2);
+      }
     }
 
     updatePlayerStats(stats, deltaSeconds);
+    updateCombat(stats, deltaSeconds);
+    autoSave.update(deltaSeconds);
 
     traffic.updateTrafficLights(deltaSeconds);
     cars.updateCars(deltaSeconds);
@@ -141,9 +197,31 @@ import { createTrafficSystem } from "./traffic.js";
       tryEatInteract(stats, nearby);
     }
 
+    if (stats.alive && input.consumePress("KeyQ")) {
+      cycleGun(stats);
+    }
+
+    if (
+      stats.alive &&
+      (input.consumePress("KeyF") || input.consumePress("Space"))
+    ) {
+      tryShoot(stats, player, npcs, effectsLayer);
+    }
+
+    if (stats.alive) {
+      for (let i = 0; i < buyGunKeys.length; i++) {
+        if (input.consumePress(buyGunKeys[i])) {
+          tryBuyGun(stats, nearby, i % GUNS.length);
+        }
+      }
+    }
+
     ui.updateMinimapPlayer(player);
     ui.updateHUD(stats, prompt);
 
     input.clearJustPressed();
   });
+
+  // Persist once systems are ready.
+  autoSave.saveNow();
 })();

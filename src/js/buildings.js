@@ -222,6 +222,32 @@ function decorateOffice(graphics, x, y, width, height, theme) {
     .fill({ color: 0x0f172a });
 }
 
+function decorateGunShop(graphics, x, y, width, height, theme) {
+  // Display cabinets.
+  for (let i = 0; i < 3; i++) {
+    const cx = x + 28 + i * 36;
+    graphics
+      .roundRect(cx, y + height / 2 - 8, 28, 40, 3)
+      .fill({ color: 0x292524 })
+      .stroke({ color: theme.accent, width: 2 });
+    graphics
+      .rect(cx + 6, y + height / 2 + 4, 16, 4)
+      .fill({ color: 0xa8a29e });
+  }
+
+  // Target icon.
+  graphics
+    .circle(x + width - 36, y + height / 2, 14)
+    .stroke({ color: 0xef4444, width: 3 });
+  graphics
+    .circle(x + width - 36, y + height / 2, 5)
+    .fill({ color: 0xef4444 });
+
+  graphics
+    .roundRect(x + width / 2 - 14, y + height - 28, 28, 20, 3)
+    .fill({ color: 0x44403c });
+}
+
 export function createBuilding(
   buildingLayer,
   labelLayer,
@@ -311,6 +337,8 @@ export function createBuilding(
     decorateGym(building, x, y, width, height, theme);
   } else if (type === "office") {
     decorateOffice(building, x, y, width, height, theme);
+  } else if (type === "gunshop") {
+    decorateGunShop(building, x, y, width, height, theme);
   }
 
   if (theme) {
