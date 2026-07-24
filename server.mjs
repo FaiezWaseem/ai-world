@@ -20,6 +20,8 @@ const BASE_URL = (process.env.BASE_URL || "https://api.flash-router.site/v1").re
 const API_KEY = process.env.API_KEY || "";
 const MODEL = process.env.MODEL || "gpt-5.4";
 const AGENT_COUNT = Number(process.env.AGENT_COUNT || 4);
+/** Upstream LLM timeout (ms). Cold model starts can take a long time. */
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 120_000);
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -104,7 +106,7 @@ async function callLlm(prompt) {
 
   const url = `${BASE_URL}/responses`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45000);
+  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   let res;
   try {
@@ -120,6 +122,15 @@ async function callLlm(prompt) {
       }),
       signal: controller.signal
     });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      const e = new Error(
+        `Upstream LLM timed out after ${LLM_TIMEOUT_MS / 1000}s`
+      );
+      e.status = 504;
+      throw e;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -240,5 +251,6 @@ server.listen(PORT, () => {
   console.log(`  model=${MODEL}`);
   console.log(`  base=${BASE_URL}`);
   console.log(`  agents=${AGENT_COUNT}`);
+  console.log(`  llmTimeout=${LLM_TIMEOUT_MS}ms`);
   console.log(`  apiKey=${API_KEY ? "set" : "MISSING — set API_KEY in .env"}`);
 });

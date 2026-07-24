@@ -35,6 +35,15 @@ import {
   requestAgentDecision,
   requestChatReply
 } from "./agentBrain.js";
+import {
+  PRIORITY,
+  clearGoal,
+  criticalNeed,
+  hasActiveGoal,
+  isRefusal,
+  parsePlayerIntent,
+  setGoal
+} from "./agentGoals.js";
 import { createConversationUi } from "./conversationUi.js";
 import { clamp, random } from "./helpers.js";
 import {
@@ -242,15 +251,33 @@ export function createAgentSystem({
   }
 
   function endConversation(silent = false) {
+    let statusMsg = "Conversation ended.";
     if (conversationAgent) {
-      conversationAgent.inConversation = false;
-      conversationAgent.pendingBorrow = null;
-      // Let them wander again soon
-      conversationAgent.thinkTimer = random(1, 3);
-      if (!silent) {
-        say(conversationAgent, "See you around.", 3);
-        pushChat(conversationAgent.name, "You", "See you around.");
+      const ag = conversationAgent;
+      ag.inConversation = false;
+      ag.pendingBorrow = null;
+      // Resume promise made during chat
+      if (ag.goal && ag.goal.source === "player_promise") {
+        applyGoalMovement(ag);
+        ag.thinkTimer = random(12, 20);
+        statusMsg = `${ag.name} is going: ${ag.goal.label}`;
+        if (!silent) {
+          say(ag, `Okay — ${ag.goal.label}.`, 4);
+          pushChat(ag.name, "You", `I'm off to: ${ag.goal.label}`);
+        }
+      } else if (ag.pausedGoal && performance.now() < ag.pausedGoal.expiresAt) {
+        ag.goal = ag.pausedGoal;
+        applyGoalMovement(ag);
+        statusMsg = `${ag.name} continues: ${ag.goal.label}`;
+      } else {
+        clearGoal(ag);
+        ag.thinkTimer = random(2, 5);
+        if (!silent) {
+          say(ag, "See you around.", 3);
+          pushChat(ag.name, "You", "See you around.");
+        }
       }
+      ag.pausedGoal = null;
     }
     conversationAgent = null;
     conversationBusy = false;
@@ -258,7 +285,7 @@ export function createAgentSystem({
     convoUi.close();
     const pStats = getPlayerStats();
     if (pStats && !silent) {
-      setPlayerMessage(pStats, "Conversation ended.", 1.5);
+      setPlayerMessage(pStats, statusMsg, 2.5);
     }
   }
 
@@ -279,9 +306,16 @@ export function createAgentSystem({
     convoUi.setBusy(true);
     convoUi.addLine("…", `${agent.name} is thinking…`, "system");
 
-    let reply = await requestChatReply(agent, text, conversationHistory);
+    const intent = parsePlayerIntent(text);
+
+    // If the player made a clear request, bias the model to agree + commit
+    let reply = await requestChatReply(agent, text, conversationHistory, {
+      intentHint: intent
+        ? `The player asked you to: ${intent.label}. If you agree, say you will do it NOW. Do not say you will go to work instead.`
+        : null
+    });
     if (!reply) {
-      reply = fallbackChatReply(agent, text);
+      reply = intent?.agreeLine || fallbackChatReply(agent, text);
     }
 
     // Remove thinking line
@@ -295,6 +329,21 @@ export function createAgentSystem({
       return;
     }
 
+    // Honor agreements: set a sticky goal so local AI won't overwrite it
+    if (intent && !isRefusal(reply)) {
+      setGoal(agent, { ...intent, source: "player_promise" }, true);
+      applyGoalMovement(agent);
+      convoUi.addLine(
+        "System",
+        `${agent.name} committed: ${intent.label}`,
+        "system"
+      );
+      reply = intent.agreeLine
+        ? `${reply}`
+        : reply;
+      agent.lastResult = `promised: ${intent.label}`;
+    }
+
     conversationHistory.push({ from: agent.name, text: reply });
     say(agent, reply, 6);
     pushChat(agent.name, "You", reply);
@@ -305,7 +354,9 @@ export function createAgentSystem({
 
     conversationBusy = false;
     convoUi.setBusy(false);
-    agent.lastResult = "talking with player";
+    agent.lastResult = agent.goal
+      ? `promised: ${agent.goal.label}`
+      : "talking with player";
   }
 
   convoUi.setHandlers({
@@ -447,7 +498,9 @@ export function createAgentSystem({
       parentIds: [],
       isChild: false,
       kidTimer: 0,
-      growTimer: 0
+      growTimer: 0,
+      goal: null,
+      pausedGoal: null
     };
 
     return attachAgent(agent, visual);
@@ -496,7 +549,9 @@ export function createAgentSystem({
       parentIds: [parentA.id, parentB.id],
       isChild: true,
       kidTimer: 0,
-      growTimer: 0
+      growTimer: 0,
+      goal: null,
+      pausedGoal: null
     };
 
     parentA.childIds = parentA.childIds || [];
@@ -584,8 +639,158 @@ export function createAgentSystem({
     return d <= step;
   }
 
-  function executeDecision(agent, decision) {
+  function applyGoalMovement(agent) {
+    const g = agent.goal;
+    if (!g || performance.now() >= g.expiresAt) {
+      clearGoal(agent, "expired");
+      return;
+    }
+
+    agent.currentAction = g.label;
+
+    if (g.type === "follow_player" || (g.withPlayer && g.type === "follow_player")) {
+      const player = getPlayer();
+      if (player) {
+        agent.targetX = player.x + random(-25, 25);
+        agent.targetY = player.y + random(-25, 25);
+        agent.targetType = null;
+      }
+      return;
+    }
+
+    if (g.type === "wait") {
+      agent.targetX = null;
+      agent.targetY = null;
+      agent.targetType = null;
+      return;
+    }
+
+    if (g.type === "work_plan") {
+      const workType = agent.stats.job?.type;
+      if (workType) {
+        const hit = nearestBuilding(agent.x, agent.y, buildingColliders, workType);
+        if (hit) {
+          agent.targetX = hit.cx;
+          agent.targetY = hit.cy;
+          agent.targetType = workType;
+        }
+      } else {
+        const hit = nearestBuilding(agent.x, agent.y, buildingColliders, "office");
+        if (hit) {
+          agent.targetX = hit.cx;
+          agent.targetY = hit.cy;
+          agent.targetType = "office";
+        }
+      }
+      return;
+    }
+
+    if (g.type === "go_to" && g.place) {
+      const hit = nearestBuilding(
+        agent.x,
+        agent.y,
+        buildingColliders,
+        SPECIAL_BUILDINGS[g.place] ? g.place : null
+      );
+      if (hit) {
+        agent.targetX = hit.cx;
+        agent.targetY = hit.cy;
+        agent.targetType = hit.building.type;
+      }
+    }
+  }
+
+  /**
+   * Convert a decision into a sticky goal (so we don't thrash).
+   */
+  function decisionToGoal(decision) {
+    if (!decision) {
+      return null;
+    }
+    const a = decision.action;
+    if (a === "go_to" && decision.target) {
+      return {
+        type: "go_to",
+        place: decision.target,
+        label: `go to ${decision.target}`,
+        priority: PRIORITY.ROUTINE,
+        durationMs: 70_000,
+        source: "decision"
+      };
+    }
+    if (a === "work" || a === "apply_job") {
+      return {
+        type: "work_plan",
+        place: decision.target || null,
+        label: a === "work" ? "work" : "find job",
+        priority: PRIORITY.SURVIVAL,
+        durationMs: 80_000,
+        source: "decision"
+      };
+    }
+    if (a === "eat") {
+      return {
+        type: "go_to",
+        place: "restaurant",
+        label: "eat",
+        priority: PRIORITY.SURVIVAL,
+        durationMs: 60_000,
+        source: "decision"
+      };
+    }
+    if (a === "marry") {
+      return {
+        type: "go_to",
+        place: "marriage_hall",
+        label: "marriage",
+        priority: PRIORITY.ROUTINE,
+        durationMs: 90_000,
+        source: "decision"
+      };
+    }
+    if (a === "buy_property") {
+      return {
+        type: "buy_property",
+        label: "buy property",
+        priority: PRIORITY.ROUTINE,
+        durationMs: 80_000,
+        source: "decision"
+      };
+    }
+    if (a === "wander") {
+      return {
+        type: "wander",
+        label: "wander",
+        priority: PRIORITY.IDLE,
+        durationMs: 25_000,
+        source: "decision"
+      };
+    }
+    if (a === "wait") {
+      return {
+        type: "wait",
+        label: "wait",
+        priority: PRIORITY.IDLE,
+        durationMs: 15_000,
+        source: "decision"
+      };
+    }
+    return null;
+  }
+
+  function executeDecision(agent, decision, options = {}) {
     if (!decision || !agent.stats.alive) {
+      return;
+    }
+
+    // Don't let low-priority brain thrash over a promise
+    if (
+      !options.force &&
+      hasActiveGoal(agent) &&
+      agent.goal.priority >= PRIORITY.PROMISE &&
+      decisionToGoal(decision)?.priority < agent.goal.priority
+    ) {
+      applyGoalMovement(agent);
       return;
     }
 
@@ -594,7 +799,27 @@ export function createAgentSystem({
       pushChat(agent.name, decision.sayTo || "all", decision.say);
     }
 
-    agent.currentAction = decision.action;
+    const asGoal = decisionToGoal(decision);
+    if (asGoal && decision.action !== "talk" && decision.action !== "divorce") {
+      setGoal(agent, asGoal, options.force);
+      if (asGoal.type === "wander") {
+        agent.targetX = clamp(agent.x + random(-280, 280), 40, WORLD_WIDTH - 40);
+        agent.targetY = clamp(agent.y + random(-280, 280), 40, WORLD_HEIGHT - 40);
+        agent.targetType = null;
+        agent.lastResult = "wandering";
+        return;
+      }
+      if (asGoal.type === "wait") {
+        agent.targetX = null;
+        agent.targetY = null;
+        agent.lastResult = "waiting";
+        return;
+      }
+      applyGoalMovement(agent);
+      // Still run immediate actions when already at place
+    }
+
+    agent.currentAction = agent.goal?.label || decision.action;
     const ctx = worldContextFor(agent);
 
     switch (decision.action) {
@@ -788,32 +1013,51 @@ export function createAgentSystem({
     }
   }
 
-  /** Instant local survival plan — never blocks on the network. */
+  /** Instant local survival plan — respects active goals/promises. */
   function planLocally(agent) {
     if (!agent.stats.alive || agent.stats.inJail || agent.inConversation) {
       return;
     }
+
+    // Critical hunger can interrupt even promises
+    const emergency = criticalNeed(agent);
+    if (emergency) {
+      setGoal(agent, emergency, true);
+      applyGoalMovement(agent);
+      agent.lastResult = "emergency food";
+      return;
+    }
+
+    // Keep working an active goal — do NOT thrash
+    if (hasActiveGoal(agent)) {
+      applyGoalMovement(agent);
+      return;
+    }
+
     const ctx = worldContextFor(agent);
     const decision = fallbackDecision(agent, ctx);
-    executeDecision(agent, decision);
+    executeDecision(agent, decision, { force: false });
 
-    // Talk / work / wait may not set a path — always keep them walking.
-    if (agent.targetX == null) {
-      executeDecision(agent, {
-        thought: "keep moving",
-        say: null,
-        sayTo: null,
-        action: "wander",
-        target: null
-      });
+    if (agent.targetX == null && !hasActiveGoal(agent)) {
+      setGoal(
+        agent,
+        {
+          type: "wander",
+          label: "wander",
+          priority: PRIORITY.IDLE,
+          durationMs: 20_000
+        },
+        true
+      );
+      agent.targetX = clamp(agent.x + random(-280, 280), 40, WORLD_WIDTH - 40);
+      agent.targetY = clamp(agent.y + random(-280, 280), 40, WORLD_HEIGHT - 40);
     }
 
     agent.lastResult = `${agent.lastResult || "planned"} [local]`;
   }
 
   /**
-   * Optional LLM rethink in the background.
-   * Movement already comes from planLocally so agents never freeze waiting on API.
+   * Optional LLM rethink — cannot break player promises unless critical.
    */
   async function thinkWithLlm(agent) {
     if (
@@ -831,21 +1075,36 @@ export function createAgentSystem({
       const prompt = buildAgentPrompt(agent, ctx);
       const decision = await requestAgentDecision(prompt);
       if (decision && agent.stats.alive && !agent.stats.inJail) {
-        executeDecision(agent, decision);
+        executeDecision(agent, decision, { force: false });
         agent.lastResult = `${agent.lastResult || "ok"} [llm]`;
       }
     } catch (err) {
       agent.lastResult = `llm error: ${err.message}`;
     } finally {
       agent.thinking = false;
-      agent.thinkTimer = random(AGENT_THINK_MIN_SEC, AGENT_THINK_MAX_SEC);
+      // Think less often when committed
+      const base = hasActiveGoal(agent) && agent.goal.priority >= PRIORITY.PROMISE
+        ? [14, 22]
+        : [AGENT_THINK_MIN_SEC, AGENT_THINK_MAX_SEC];
+      agent.thinkTimer = random(base[0], base[1]);
     }
   }
 
-  // Start walking immediately on spawn (don't wait for first think tick).
+  // Start with a calm wander goal (not constant replan)
   for (const agent of agents) {
-    planLocally(agent);
-    agent.thinkTimer = random(2, 5);
+    setGoal(
+      agent,
+      {
+        type: "wander",
+        label: "explore",
+        priority: PRIORITY.IDLE,
+        durationMs: 20_000 + random(0, 15_000)
+      },
+      true
+    );
+    agent.targetX = clamp(agent.x + random(-400, 400), 40, WORLD_WIDTH - 40);
+    agent.targetY = clamp(agent.y + random(-400, 400), 40, WORLD_HEIGHT - 40);
+    agent.thinkTimer = random(3, 8);
   }
 
   function updateAgents(deltaSeconds) {
@@ -920,9 +1179,49 @@ export function createAgentSystem({
         continue;
       }
 
-      // Always keep a destination so agents roam the map.
-      if (!agent.stats.inJail && agent.targetX == null) {
+      // Expire goals
+      if (agent.goal && performance.now() >= agent.goal.expiresAt) {
+        clearGoal(agent, "expired");
+      }
+
+      // Critical interrupt
+      if (!agent.stats.inJail) {
+        const emergency = criticalNeed(agent);
+        if (
+          emergency &&
+          (!hasActiveGoal(agent) || agent.goal.priority < PRIORITY.CRITICAL)
+        ) {
+          setGoal(agent, emergency, true);
+          applyGoalMovement(agent);
+        }
+      }
+
+      // Follow-player: refresh path often
+      if (
+        hasActiveGoal(agent) &&
+        agent.goal.type === "follow_player" &&
+        !agent.stats.inJail
+      ) {
+        applyGoalMovement(agent);
+      }
+
+      // Need a plan only when idle (no goal)
+      if (!agent.stats.inJail && !hasActiveGoal(agent) && agent.targetX == null) {
         planLocally(agent);
+      } else if (
+        !agent.stats.inJail &&
+        hasActiveGoal(agent) &&
+        agent.targetX == null &&
+        agent.goal.type !== "wait"
+      ) {
+        applyGoalMovement(agent);
+      }
+
+      // Wait goals: stand still until expiry
+      if (hasActiveGoal(agent) && agent.goal.type === "wait") {
+        agent.targetX = null;
+        agent.targetY = null;
+        agent.currentAction = agent.goal.label;
       }
 
       if (!agent.stats.inJail && agent.targetX != null) {
@@ -936,7 +1235,9 @@ export function createAgentSystem({
         if (arrived) {
           agent.targetX = null;
           agent.targetY = null;
+          const arrivedType = destType;
           agent.targetType = null;
+
           if (agent.pendingBorrow) {
             const pending = agent.pendingBorrow;
             agent.pendingBorrow = null;
@@ -945,17 +1246,17 @@ export function createAgentSystem({
             } else if (pending.kind === "gun") {
               doBorrowGun(agent, pending.decision, agents, pushChat);
             }
-          } else if (destType === "restaurant" || destType === "grocery") {
+          } else if (arrivedType === "restaurant" || arrivedType === "grocery") {
             doEat(agent, buildingColliders);
-          } else if (agent.stats.job && destType === agent.stats.job.type) {
+          } else if (agent.stats.job && arrivedType === agent.stats.job.type) {
             doWork(agent, buildingColliders);
-          } else if (destType && JOBS[destType] && !agent.stats.job) {
-            doApplyJob(agent, buildingColliders, destType);
-          } else if (destType === "gunshop") {
+          } else if (arrivedType && JOBS[arrivedType] && !agent.stats.job) {
+            doApplyJob(agent, buildingColliders, arrivedType);
+          } else if (arrivedType === "gunshop") {
             doBuyGun(agent, buildingColliders, "pistol");
-          } else if (destType === "property") {
+          } else if (arrivedType === "property") {
             doBuyProperty(agent, buildingColliders);
-          } else if (destType === "marriage_hall" || agent.pendingMarry) {
+          } else if (arrivedType === "marriage_hall" || agent.pendingMarry) {
             const pending = agent.pendingMarry;
             agent.pendingMarry = null;
             doMarry(
@@ -966,9 +1267,28 @@ export function createAgentSystem({
               pushChat
             );
           }
-          // Immediately pick next goal so they don't stand still.
-          if (!agent.inConversation) {
-            planLocally(agent);
+
+          // Promise goals: hold at destination (e.g. dinner) instead of job-thrash
+          if (hasActiveGoal(agent) && agent.goal.priority >= PRIORITY.PROMISE) {
+            if (agent.goal.arrivedAt == null) {
+              agent.goal.arrivedAt = performance.now();
+              if (agent.goal.withPlayer) {
+                say(agent, "I'm here — ready when you are.", 4);
+                pushChat(agent.name, "You", "I'm here — ready when you are.");
+              }
+            }
+            const holdMs = (agent.goal.holdAfterArrive || 12) * 1000;
+            if (performance.now() - agent.goal.arrivedAt < holdMs) {
+              agent.currentAction = agent.goal.label + " (here)";
+              // stay put
+            } else {
+              clearGoal(agent, "promise completed");
+              // Soft replan later, not instantly thrashing
+              agent.thinkTimer = Math.min(agent.thinkTimer, 3);
+            }
+          } else if (hasActiveGoal(agent)) {
+            // Non-promise: finish goal on arrival after action
+            clearGoal(agent, "arrived");
           }
         }
       }
@@ -1062,6 +1382,11 @@ export function createAgentSystem({
     nearest.currentAction = "talking";
     nearest.rotation =
       Math.atan2(player.y - nearest.y, player.x - nearest.x) + Math.PI / 2;
+    // Hold still while chatting; keep any prior goal to resume if needed
+    nearest.pausedGoal =
+      nearest.goal && nearest.goal.source !== "conversation"
+        ? { ...nearest.goal }
+        : null;
 
     const greeting = `Hey! I'm ${nearest.name}. What's on your mind?`;
     conversationHistory.push({ from: nearest.name, text: greeting });

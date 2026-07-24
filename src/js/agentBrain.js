@@ -3,8 +3,46 @@ import {
   GUNS,
   INTERACT_DISTANCE,
   JOBS,
+  LLM_CLIENT_TIMEOUT_MS,
   SPECIAL_BUILDINGS
 } from "./config.js";
+
+/**
+ * One LLM request at a time so freemodel/container hosts don't explode
+ * with "max instances exceeded". Chat gets priority by going through same queue.
+ */
+let llmQueue = Promise.resolve();
+
+function enqueueLlm(task) {
+  const run = llmQueue.then(task, task);
+  // Don't let one failure kill the chain
+  llmQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function postDecide(prompt, timeoutMs = LLM_CLIENT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch("/api/agent/decide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Build the LLM prompt for one agent turn.
@@ -55,10 +93,13 @@ STATE:
 - married: ${agent.spouseId ? `yes, to ${agent.spouseName}` : "no"}
 - isChild: ${Boolean(agent.isChild)}
 - kids: ${(agent.childIds || []).length}
+- active goal/commitment: ${agent.goal ? agent.goal.label : "none"}
 - wanted: ${agent.stats.wanted}
 - inJail: ${agent.stats.inJail} (jailTimer=${agent.stats.jailTimer?.toFixed?.(1) || 0}s)
 - position: (${Math.round(agent.x)}, ${Math.round(agent.y)})
 - last action result: ${agent.lastResult || "none"}
+
+IMPORTANT: If you have an active commitment (especially with the human), keep working on it. Do not randomly switch to work/jobs.
 
 NEARBY BUILDINGS: ${nearby || "none"}
 NEARBY PEOPLE: ${others || "none"}
@@ -414,43 +455,51 @@ function pickChat(agent, other) {
 }
 
 export async function requestAgentDecision(prompt) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
-
-  try {
-    const res = await fetch("/api/agent/decide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-      signal: controller.signal
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+  return enqueueLlm(async () => {
+    try {
+      const data = await postDecide(prompt, LLM_CLIENT_TIMEOUT_MS);
+      return parseAgentDecision(data.text);
+    } catch (err) {
+      const msg =
+        err?.name === "AbortError"
+          ? `timed out after ${LLM_CLIENT_TIMEOUT_MS / 1000}s`
+          : err.message;
+      console.warn("[agent LLM]", msg);
+      return null;
     }
-    return parseAgentDecision(data.text);
-  } catch (err) {
-    console.warn("[agent LLM]", err.message);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 /**
  * Free-form chat reply (plain text, not JSON action).
  */
-export async function requestChatReply(agent, playerLine, history = []) {
+export async function requestChatReply(
+  agent,
+  playerLine,
+  history = [],
+  options = {}
+) {
   const hist = history
     .slice(-6)
     .map((h) => `${h.from}: ${h.text}`)
     .join("\n");
 
+  const goalNote = agent.goal
+    ? `Your current commitment: "${agent.goal.label}" — you will do this after chatting unless you clearly refuse.`
+    : "You have no special commitment yet.";
+
+  const intentNote = options.intentHint ? `\n${options.intentHint}` : "";
+
   const prompt = `You are ${agent.name}, a citizen in a city game.
 Personality: ${agent.personality}
 Your status: money $${agent.stats.money}, hunger ${Math.round(agent.stats.hunger)}%, job ${agent.stats.job?.title || "none"}.
+${goalNote}
 
-You are in a face-to-face conversation with the human player.
+You are face-to-face with the human player.
+RULE: If they invite you to dinner/restaurant/follow/wait and you agree, say you will go there NOW. Never agree then talk about going to work instead.
+If you must refuse, say no clearly.
+${intentNote}
+
 Recent chat:
 ${hist || "(start of talk)"}
 
@@ -458,45 +507,44 @@ Player just said: "${playerLine}"
 
 Reply in ONE short spoken line (max 100 characters). Stay in character. No JSON, no quotes around the whole reply, no stage directions.`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
-
-  try {
-    const res = await fetch("/api/agent/decide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-      signal: controller.signal
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
-    }
-    let text = (data.text || "").trim();
-    // Strip wrapping quotes / code fences
-    text = text.replace(/^```[\s\S]*?```$/g, "").trim();
-    text = text.replace(/^["'“”]|["'“”]$/g, "").trim();
-    // If model returned JSON by mistake, pull "say"
-    if (text.startsWith("{")) {
-      try {
-        const obj = JSON.parse(text);
-        text = obj.say || obj.reply || obj.text || text;
-      } catch {
-        /* keep text */
+  return enqueueLlm(async () => {
+    try {
+      const data = await postDecide(prompt, LLM_CLIENT_TIMEOUT_MS);
+      let text = (data.text || "").trim();
+      text = text.replace(/^```[\s\S]*?```$/g, "").trim();
+      text = text.replace(/^["'“”]|["'“”]$/g, "").trim();
+      if (text.startsWith("{")) {
+        try {
+          const obj = JSON.parse(text);
+          text = obj.say || obj.reply || obj.text || text;
+        } catch {
+          /* keep */
+        }
       }
+      return String(text).slice(0, 120) || null;
+    } catch (err) {
+      const msg =
+        err?.name === "AbortError"
+          ? `timed out after ${LLM_CLIENT_TIMEOUT_MS / 1000}s`
+          : err.message;
+      console.warn("[agent chat]", msg);
+      return null;
     }
-    text = String(text).slice(0, 120);
-    return text || null;
-  } catch (err) {
-    console.warn("[agent chat]", err.message);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 export function fallbackChatReply(agent, playerLine) {
   const line = (playerLine || "").toLowerCase();
+
+  // Social invites — default to yes so local AI matches commitments
+  if (
+    /dinner|lunch|restaurant|eat with|grab (a )?bite|food together|come with|follow me|wait here|hang out|meet me/.test(
+      line
+    )
+  ) {
+    return "Yes — I'll do that with you. Let's go.";
+  }
+
   if (/money|cash|broke|loan|borrow/.test(line)) {
     return `I've got about $${agent.stats.money}. Work shifts help.`;
   }
@@ -519,7 +567,7 @@ export function fallbackChatReply(agent, playerLine) {
     "Yeah, this city never sleeps.",
     "I hear you.",
     `Stay safe out there — I'm ${agent.name}.`,
-    "True enough. Gotta keep moving soon.",
+    "True enough.",
     "Ha. Fair point."
   ];
   return generic[Math.floor(Math.random() * generic.length)];

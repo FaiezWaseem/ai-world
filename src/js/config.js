@@ -17,8 +17,11 @@ export const CAR_COUNT = 42;
 export const DEFAULT_AGENT_COUNT = 4;
 export const AGENT_SIZE = 26;
 export const AGENT_SPEED = 240;
-export const AGENT_THINK_MIN_SEC = 6;
-export const AGENT_THINK_MAX_SEC = 12;
+/** How often agents request a new LLM plan (longer = fewer concurrent API hits). */
+export const AGENT_THINK_MIN_SEC = 12;
+export const AGENT_THINK_MAX_SEC = 22;
+/** Browser wait for /api/agent/decide (ms). Keep below or equal to server timeout. */
+export const LLM_CLIENT_TIMEOUT_MS = 120_000;
 export const AGENT_SPEECH_RANGE = 160;
 /** How close agents must be to talk to the human player. */
 export const AGENT_PLAYER_TALK_RANGE = 140;
