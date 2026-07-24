@@ -1,6 +1,7 @@
 import {
   BANK_LOOT,
   BANK_SECURITY_CHASE,
+  BANK_SECURITY_CHASE_RADIUS,
   BANK_SECURITY_COUNT,
   BANK_SECURITY_PATROL,
   BANK_SECURITY_PATROL_RADIUS,
@@ -138,6 +139,17 @@ export function createBankSystem({
     const player = getPlayer();
     const stats = getPlayerStats();
 
+    // 2 blocks L/R/U/D from bank center
+    const zone = BANK_SECURITY_CHASE_RADIUS;
+    const playerDistFromBank = player
+      ? Math.hypot(player.x - cx, player.y - cy)
+      : Infinity;
+    const playerInZone =
+      player &&
+      stats?.alive &&
+      !stats.inJail &&
+      playerDistFromBank <= zone;
+
     for (const guard of guards) {
       if (!guard.alive) {
         continue;
@@ -147,11 +159,8 @@ export function createBankSystem({
       let moveY = 0;
       let speed = BANK_SECURITY_PATROL;
 
-      const chase =
-        alarm &&
-        stats?.alive &&
-        !stats.inJail &&
-        player;
+      // Only chase while the robber is still inside the 2-block bank zone.
+      const chase = alarm && playerInZone;
 
       if (chase) {
         speed = BANK_SECURITY_CHASE;
@@ -162,7 +171,6 @@ export function createBankSystem({
         moveY = dy / d;
 
         if (d <= BANK_SECURITY_RANGE) {
-          // Rough up the robber — damage health
           stats.health = Math.max(0, stats.health - 18 * deltaSeconds);
           if (stats.health <= 0) {
             stats.alive = false;
@@ -171,9 +179,11 @@ export function createBankSystem({
           }
         }
       } else {
-        // Orbit the bank
+        // Orbit / return to bank when idle or player escaped the zone
         guard.patrolT += deltaSeconds * 0.6;
-        const r = BANK_SECURITY_PATROL_RADIUS * (0.55 + 0.2 * Math.sin(guard.patrolT));
+        const r =
+          BANK_SECURITY_PATROL_RADIUS *
+          (0.55 + 0.2 * Math.sin(guard.patrolT));
         const tx = cx + Math.cos(guard.patrolT + guard.homeAngle) * r;
         const ty = cy + Math.sin(guard.patrolT + guard.homeAngle) * r;
         const dx = tx - guard.x;
@@ -181,26 +191,20 @@ export function createBankSystem({
         const d = Math.hypot(dx, dy) || 1;
         moveX = dx / d;
         moveY = dy / d;
-      }
-
-      guard.x = clamp(
-        guard.x + moveX * speed * deltaSeconds,
-        20,
-        WORLD_WIDTH - 20
-      );
-      guard.y = clamp(
-        guard.y + moveY * speed * deltaSeconds,
-        20,
-        WORLD_HEIGHT - 20
-      );
-      // Keep near bank when not chasing hard
-      if (!chase) {
-        const fromBank = Math.hypot(guard.x - cx, guard.y - cy);
-        if (fromBank > BANK_SECURITY_PATROL_RADIUS + 40) {
-          guard.x += (cx - guard.x) * 0.05;
-          guard.y += (cy - guard.y) * 0.05;
+        // Run back faster if they drifted out during a chase
+        if (Math.hypot(guard.x - cx, guard.y - cy) > zone * 0.85) {
+          speed = BANK_SECURITY_CHASE * 0.75;
         }
       }
+
+      guard.x += moveX * speed * deltaSeconds;
+      guard.y += moveY * speed * deltaSeconds;
+
+      // Hard clamp: never leave the 2-block square around the bank
+      guard.x = clamp(guard.x, cx - zone, cx + zone);
+      guard.y = clamp(guard.y, cy - zone, cy + zone);
+      guard.x = clamp(guard.x, 20, WORLD_WIDTH - 20);
+      guard.y = clamp(guard.y, 20, WORLD_HEIGHT - 20);
 
       if (moveX !== 0 || moveY !== 0) {
         guard.rotation = Math.atan2(moveY, moveX) + Math.PI / 2;

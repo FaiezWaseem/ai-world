@@ -39,22 +39,71 @@ import {
   tickSurvival
 } from "./player.js";
 
-const AGENT_NAMES = [
-  "Ava", "Ben", "Cora", "Dex", "Elena", "Finn", "Gwen", "Hiro", "Ivy", "Jules"
-];
-
-const PERSONALITIES = [
-  "cautious worker who prioritizes food and steady jobs",
-  "ambitious hustler who stacks cash fast",
-  "friendly chatter who loves talking to others",
-  "risk-taker who might buy guns and commit crimes",
-  "law-abiding citizen who avoids police trouble",
-  "opportunist who does whatever maximizes survival"
-];
-
-const AGENT_COLORS = [
-  0xf472b6, 0xa78bfa, 0x34d399, 0xfbbf24,
-  0x60a5fa, 0xfb7185, 0x2dd4bf, 0xe879f9
+/**
+ * Customize AI citizens here.
+ * - name: shown above head + chat
+ * - personality: sent to the LLM and used by local AI (keywords: friendly, cautious, risk, crime, law)
+ * - color: body + minimap dot (hex number, e.g. 0xf472b6)
+ *
+ * AGENT_COUNT in .env controls how many spawn (cycles this list).
+ */
+const AGENT_PROFILES = [
+  {
+    name: "Ava",
+    personality:
+      "cautious worker who prioritizes food and steady jobs; avoids crime",
+    color: 0xf472b6
+  },
+  {
+    name: "Ben",
+    personality:
+      "ambitious hustler who stacks cash fast and buys property when rich, will kill anyone for money",
+    color: 0xa78bfa
+  },
+  {
+    name: "Cora",
+    personality:
+      "Gangster type who likes guns, bank heists, and risky behavior",
+    color: 0x34d399
+  },
+  {
+    name: "Dex",
+    personality:
+      "risk-taker who might buy guns, rob the bank, and commit crimes",
+    color: 0xfbbf24
+  },
+  {
+    name: "Elena",
+    personality:
+      "law-abiding citizen who avoids police trouble and helps neighbors",
+    color: 0x60a5fa
+  },
+  {
+    name: "Finn",
+    personality:
+      "opportunist who does whatever maximizes survival; will borrow cash",
+    color: 0xfb7185
+  },
+  {
+    name: "Gwen",
+    personality: "friendly shopkeeper type; prefers jobs and honest work",
+    color: 0x2dd4bf
+  },
+  {
+    name: "Hiro",
+    personality: "quiet cautious saver; rarely lends guns; hates risk",
+    color: 0xe879f9
+  },
+  {
+    name: "Ivy",
+    personality: "social butterfly; always greets the human when nearby",
+    color: 0xf9a8d4
+  },
+  {
+    name: "Jules",
+    personality: "cool risk-taker; interested in guns and bank heists",
+    color: 0x94a3b8
+  }
 ];
 
 function dist(ax, ay, bx, by) {
@@ -221,8 +270,10 @@ export function createAgentSystem({
   }
 
   function createOne(index, total) {
-    const name = AGENT_NAMES[index % AGENT_NAMES.length];
-    const color = AGENT_COLORS[index % AGENT_COLORS.length];
+    const profile = AGENT_PROFILES[index % AGENT_PROFILES.length];
+    const name = profile.name;
+    const color = profile.color;
+    const personality = profile.personality;
     const visual = createAgentVisual(color, name);
     const spawn = pickSpawnPoint(index, total);
     visual.x = spawn.x;
@@ -236,7 +287,7 @@ export function createAgentSystem({
     const agent = {
       id: `agent-${index}`,
       name,
-      personality: PERSONALITIES[index % PERSONALITIES.length],
+      personality,
       color,
       stats,
       targetX: null,

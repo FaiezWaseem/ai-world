@@ -216,6 +216,10 @@ export const BANK_SECURITY_CHASE = 250;
 export const BANK_SECURITY_RANGE = 42;
 /** Guards stay near the bank within this radius while idle. */
 export const BANK_SECURITY_PATROL_RADIUS = 220;
+/** Max chase distance from bank center (~2 city blocks each way). */
+export const BANK_SECURITY_CHASE_BLOCKS = 2;
+export const BANK_SECURITY_CHASE_RADIUS =
+  CELL_SIZE * BANK_SECURITY_CHASE_BLOCKS;
 
 /**
  * Guns for sale at GUN SHOP (buy with 1–5 while nearby).
